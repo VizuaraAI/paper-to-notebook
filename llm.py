@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import time
 from pathlib import Path
 
@@ -25,7 +26,8 @@ def call_gemini(
     model: str = "gemini-2.5-pro",
 ) -> str:
     """Make a Gemini API call and return the text response."""
-    client = genai.Client()  # Uses GEMINI_API_KEY env var (or GOOGLE_API_KEY)
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
         model=model,
         contents=user_content,
