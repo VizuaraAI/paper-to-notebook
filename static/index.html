@@ -539,12 +539,27 @@ function completeAllSteps() {
   }
 }
 
-// --- Spinner ---
+// --- Spinner with elapsed timer ---
+let spinnerTimer = null;
+let spinnerStart = 0;
+let spinnerBaseText = '';
+
 function showSpinner(text) {
   spinner.classList.add('active');
+  spinnerBaseText = text;
   spinnerLabel.textContent = text;
+  // Reset timer for each new step
+  if (spinnerTimer) clearInterval(spinnerTimer);
+  spinnerStart = Date.now();
+  spinnerTimer = setInterval(() => {
+    const secs = Math.floor((Date.now() - spinnerStart) / 1000);
+    spinnerLabel.textContent = `${spinnerBaseText} (${secs}s)`;
+  }, 1000);
 }
-function hideSpinner() { spinner.classList.remove('active'); }
+function hideSpinner() {
+  spinner.classList.remove('active');
+  if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+}
 
 // --- Activity cards ---
 function addCard(label, title, bodyHtml) {
