@@ -19,7 +19,7 @@ from config import MAX_PDF_SIZE_MB, DEFAULT_MODEL
 from web_pipeline import run_web_pipeline
 
 # --- Configuration ---
-RATE_LIMIT = os.environ.get("RATE_LIMIT", "5/hour")
+RATE_LIMIT = os.environ.get("RATE_LIMIT", "10/hour")
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", str(MAX_PDF_SIZE_MB)))
 
 # --- App setup ---
