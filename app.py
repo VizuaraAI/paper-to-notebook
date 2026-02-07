@@ -134,7 +134,4 @@ async def download(job_id: str):
 
 @app.get("/health")
 async def health():
-    has_key = bool(os.environ.get("GOOGLE_API_KEY"))
-    # List all env var names to debug
-    all_vars = sorted([k for k in os.environ.keys() if "KEY" in k or "GOOGLE" in k or "GEMINI" in k or "API" in k])
-    return {"status": "ok", "api_key_set": has_key, "relevant_vars": all_vars}
+    return {"status": "ok"}
