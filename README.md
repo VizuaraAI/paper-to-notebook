@@ -1,6 +1,6 @@
 # Paper2Notebook 📄→📓
 
-Transform research papers into executable Jupyter notebooks in seconds. Powered by Gemini 2.5 Pro.
+Transform research papers into executable Jupyter notebooks in seconds. Powered by Gemini 2.5 Pro or local Ollama models.
 
 ![Paper2Notebook](https://img.shields.io/badge/AI-Powered-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -15,6 +15,7 @@ Transform research papers into executable Jupyter notebooks in seconds. Powered 
 
 - **📄 PDF to Notebook Conversion**: Upload research papers and get runnable PyTorch notebooks
 - **🔗 arXiv Integration**: Direct support for arXiv papers - just paste the URL
+- **🤖 Dual LLM Support**: Use Gemini (cloud) or Ollama (local) for notebook generation
 - **📐 LaTeX Extraction**: Automatically extracts and renders mathematical equations
 - **🐍 PyTorch Implementation**: Real ML implementations at reduced scale for CPU execution
 - **☁️ Google Colab Ready**: One-click "Open in Colab" functionality
@@ -24,12 +25,15 @@ Transform research papers into executable Jupyter notebooks in seconds. Powered 
 ## 🛠️ Tech Stack
 
 ### Backend
+
 - **FastAPI**: High-performance Python web framework
-- **Gemini 2.5 Pro**: State-of-the-art LLM for code generation
-- **PyMuPDF**: PDF processing and text extraction
+- **Gemini 2.5 Pro**: Cloud LLM for code generation
+- **Ollama**: Local LLM inference (optional)
+- **pypdf**: PDF text extraction for local LLM processing
 - **nbformat**: Jupyter notebook generation
 
 ### Frontend
+
 - **Next.js 14**: React framework with App Router
 - **TypeScript**: Type-safe development
 - **Tailwind CSS**: Utility-first styling
@@ -40,7 +44,8 @@ Transform research papers into executable Jupyter notebooks in seconds. Powered 
 
 - Python 3.9+
 - Node.js 18+
-- Gemini API key ([Get one here](https://aistudio.google.com/apikey))
+- **For Gemini**: API key ([Get one here](https://aistudio.google.com/apikey))
+- **For Ollama**: Ollama installed locally or accessible on your network ([ollama.ai](https://ollama.ai))
 
 ## 🚀 Quick Start
 
@@ -59,7 +64,7 @@ pip install -r requirements.txt
 
 # Create .env file
 cp .env.example .env
-# Add your Gemini API key to .env
+# Add your Gemini API key and/or Ollama URL to .env
 
 # Run the server
 uvicorn app:app --reload --port 8000
@@ -88,9 +93,10 @@ The frontend will be available at `http://localhost:3000`
 ## 📖 Usage
 
 1. **Upload a Paper**: Drag and drop a PDF or paste an arXiv URL
-2. **Enter API Key**: Provide your Gemini API key (bring your own key)
-3. **Generate**: Click generate and watch as the notebook is created
-4. **Download or Open in Colab**: Get your executable notebook instantly
+2. **Select Provider**: Choose between Gemini (cloud) or Ollama (local)
+3. **Enter API Key**: Provide your Gemini API key (only needed for Gemini provider)
+4. **Generate**: Click generate and watch as the notebook is created
+5. **Download or Open in Colab**: Get your executable notebook instantly
 
 ## 🏗️ Project Structure
 
@@ -112,7 +118,7 @@ paper-to-notebook/
 ## 🎯 How It Works
 
 1. **PDF Processing**: Extracts text and structure from research papers
-2. **AI Analysis**: Gemini 2.5 Pro analyzes the paper's methodology and algorithms
+2. **AI Analysis**: The selected LLM (Gemini or Ollama) analyzes the paper's methodology and algorithms
 3. **Code Generation**: Generates PyTorch implementation based on the paper
 4. **Notebook Assembly**: Creates structured Jupyter notebook with:
    - Abstract and introduction
@@ -121,6 +127,44 @@ paper-to-notebook/
    - Experiment structure
    - Comments and documentation
 
+## 🦙 Ollama Integration (Local LLM)
+
+You can use **Ollama** instead of Gemini to run the entire pipeline locally — no cloud API key needed. This is useful if:
+
+- You have Ollama installed on your own machine (`localhost`)
+- You have an Ollama instance running on a machine in your office/home network (e.g. `192.168.x.x`)
+
+### Setup
+
+1. **Install Ollama** from [ollama.ai](https://ollama.ai) (on the machine that will run the models)
+
+2. **Pull a model**:
+
+   ```bash
+   ollama pull mistral:7b
+   ```
+
+3. **Start the Ollama server**:
+
+   ```bash
+   ollama serve
+   ```
+
+4. **Configure the backend** — set `OLLAMA_BASE_URL` in `backend/.env`:
+
+   ```bash
+   # If Ollama is running on the same machine:
+   OLLAMA_BASE_URL=http://localhost:11434
+
+   # If Ollama is on another machine in your network:
+   OLLAMA_BASE_URL=http://192.168.1.143:11434
+   ```
+
+5. **Select Ollama in the UI** — use the "Provider" dropdown to switch to "Ollama (Local)", then pick a model.
+
+
+> **Note**: For Ollama to be accessible from another machine, make sure it is started with `OLLAMA_HOST=0.0.0.0:11434 ollama serve` so it binds to all network interfaces, not just localhost.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -128,7 +172,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📝 License
 
 This project is licensed under the MIT License.
-
 
 ## 📧 Contact
 

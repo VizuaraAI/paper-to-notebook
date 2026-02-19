@@ -32,13 +32,13 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 
 // Tag colors by category
 const TAG_STYLES = {
-  violet:  'bg-violet-500/15 text-violet-300 border border-violet-500/25',
-  pink:    'bg-pink-500/15 text-pink-300 border border-pink-500/25',
-  sky:     'bg-[#8ad4ff]/15 text-[#8ad4ff] border border-[#8ad4ff]/30',
+  violet: 'bg-violet-500/15 text-violet-300 border border-violet-500/25',
+  pink: 'bg-pink-500/15 text-pink-300 border border-pink-500/25',
+  sky: 'bg-[#8ad4ff]/15 text-[#8ad4ff] border border-[#8ad4ff]/30',
   emerald: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25',
-  amber:   'bg-amber-500/15 text-amber-300 border border-amber-500/25',
-  teal:    'bg-teal-500/15 text-teal-300 border border-teal-500/25',
-  rose:    'bg-rose-500/15 text-rose-300 border border-rose-500/25',
+  amber: 'bg-amber-500/15 text-amber-300 border border-amber-500/25',
+  teal: 'bg-teal-500/15 text-teal-300 border border-teal-500/25',
+  rose: 'bg-rose-500/15 text-rose-300 border border-rose-500/25',
 } as const
 
 function TagRow({ label, tags, color }: { label: string; tags: string[]; color: keyof typeof TAG_STYLES }) {
@@ -113,24 +113,24 @@ function PaperCardSkeleton() {
     <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden space-y-3 animate-pulse">
       <div className="w-full aspect-[2/1] bg-white/10 rounded-t-2xl" />
       <div className="p-5 space-y-3">
-      <div className="flex gap-2 items-center">
-        <div className="h-5 w-10 bg-white/10 rounded" />
-        <div className="h-5 w-16 bg-white/10 rounded-full" />
-        <div className="h-5 w-14 bg-white/10 rounded-full" />
-        <div className="h-4 w-10 bg-white/5 rounded ml-auto" />
-      </div>
-      <div className="h-4 bg-white/10 rounded w-5/6" />
-      <div className="h-4 bg-white/10 rounded w-3/5" />
-      <div className="h-3 bg-white/5 rounded w-2/5" />
-      <div className="space-y-1.5 pt-1">
-        <div className="h-3 bg-white/5 rounded w-full" />
-        <div className="h-3 bg-white/5 rounded w-5/6" />
-        <div className="h-3 bg-white/5 rounded w-4/6" />
-      </div>
-      <div className="flex gap-2 pt-2 border-t border-white/5">
-        <div className="h-7 w-20 bg-white/5 rounded-lg" />
-        <div className="h-7 w-36 bg-white/5 rounded-lg ml-auto" />
-      </div>
+        <div className="flex gap-2 items-center">
+          <div className="h-5 w-10 bg-white/10 rounded" />
+          <div className="h-5 w-16 bg-white/10 rounded-full" />
+          <div className="h-5 w-14 bg-white/10 rounded-full" />
+          <div className="h-4 w-10 bg-white/5 rounded ml-auto" />
+        </div>
+        <div className="h-4 bg-white/10 rounded w-5/6" />
+        <div className="h-4 bg-white/10 rounded w-3/5" />
+        <div className="h-3 bg-white/5 rounded w-2/5" />
+        <div className="space-y-1.5 pt-1">
+          <div className="h-3 bg-white/5 rounded w-full" />
+          <div className="h-3 bg-white/5 rounded w-5/6" />
+          <div className="h-3 bg-white/5 rounded w-4/6" />
+        </div>
+        <div className="flex gap-2 pt-2 border-t border-white/5">
+          <div className="h-7 w-20 bg-white/5 rounded-lg" />
+          <div className="h-7 w-36 bg-white/5 rounded-lg ml-auto" />
+        </div>
       </div>{/* end p-5 body */}
     </div>
   )
@@ -163,73 +163,73 @@ function PaperCard({ paper, onConvert }: { paper: TrendingPaper; onConvert: (url
       {/* Card body */}
       <div className="flex flex-col gap-4 p-7 flex-1">
 
-      {/* Top row: date + keywords + github stars */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {paper.publishedAt && (
-          <span className="text-xs font-mono bg-[#ffd78a]/10 text-[#ffd78a]/60 px-2.5 py-1 rounded shrink-0">
-            {paper.publishedAt}
-          </span>
-        )}
-        {paper.keywords.slice(0, 2).map(kw => (
-          <span key={kw} className={`text-xs px-2.5 py-1 rounded-full border ${getTaskStyle(kw)}`}>
-            {kw.length > 22 ? kw.slice(0, 21) + '…' : kw}
-          </span>
-        ))}
-        {paper.githubUrl ? (
+        {/* Top row: date + keywords + github stars */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {paper.publishedAt && (
+            <span className="text-xs font-mono bg-[#ffd78a]/10 text-[#ffd78a]/60 px-2.5 py-1 rounded shrink-0">
+              {paper.publishedAt}
+            </span>
+          )}
+          {paper.keywords.slice(0, 2).map(kw => (
+            <span key={kw} className={`text-xs px-2.5 py-1 rounded-full border ${getTaskStyle(kw)}`}>
+              {kw.length > 22 ? kw.slice(0, 21) + '…' : kw}
+            </span>
+          ))}
+          {paper.githubUrl ? (
+            <a
+              href={paper.githubUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="ml-auto flex items-center gap-1 text-xs text-white/50 hover:text-white/80 transition-colors shrink-0"
+              title="GitHub repository"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+              </svg>
+              {paper.githubStars > 0 ? (
+                <span>{paper.githubStars >= 1000 ? (paper.githubStars / 1000).toFixed(1) + 'k' : paper.githubStars}</span>
+              ) : null}
+            </a>
+          ) : paper.upvotes > 0 ? (
+            <div className="ml-auto flex items-center gap-1 text-xs text-[#ffd78a]/70 shrink-0" title="Upvotes on HuggingFace">
+              <Star className="w-3.5 h-3.5 fill-[#ffd78a]/40" />
+              {paper.upvotes}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Title */}
+        <h3 className="text-base font-bold text-white leading-snug group-hover:text-[#8ad4ff] transition-colors line-clamp-2">
+          {paper.title}
+        </h3>
+
+        {/* Authors */}
+        <p className="text-xs text-white/35 font-medium -mt-1">{paper.authors}</p>
+
+        {/* Abstract */}
+        <p className="text-sm text-white/55 leading-relaxed line-clamp-3 flex-1">{paper.abstract}</p>
+
+        {/* Bottom actions */}
+        <div className="flex items-center gap-2 pt-3 border-t border-white/5">
           <a
-            href={paper.githubUrl}
+            href={paper.hfUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
-            className="ml-auto flex items-center gap-1 text-xs text-white/50 hover:text-white/80 transition-colors shrink-0"
-            title="GitHub repository"
+            className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10"
           >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-            </svg>
-            {paper.githubStars > 0 ? (
-              <span>{paper.githubStars >= 1000 ? (paper.githubStars / 1000).toFixed(1) + 'k' : paper.githubStars}</span>
-            ) : null}
+            <ArrowUpRight className="w-3.5 h-3.5" />
+            HF Paper
           </a>
-        ) : paper.upvotes > 0 ? (
-          <div className="ml-auto flex items-center gap-1 text-xs text-[#ffd78a]/70 shrink-0" title="Upvotes on HuggingFace">
-            <Star className="w-3.5 h-3.5 fill-[#ffd78a]/40" />
-            {paper.upvotes}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Title */}
-      <h3 className="text-base font-bold text-white leading-snug group-hover:text-[#8ad4ff] transition-colors line-clamp-2">
-        {paper.title}
-      </h3>
-
-      {/* Authors */}
-      <p className="text-xs text-white/35 font-medium -mt-1">{paper.authors}</p>
-
-      {/* Abstract */}
-      <p className="text-sm text-white/55 leading-relaxed line-clamp-3 flex-1">{paper.abstract}</p>
-
-      {/* Bottom actions */}
-      <div className="flex items-center gap-2 pt-3 border-t border-white/5">
-        <a
-          href={paper.hfUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10"
-        >
-          <ArrowUpRight className="w-3.5 h-3.5" />
-          HF Paper
-        </a>
-        <button
-          onClick={() => onConvert(paper.arxivUrl)}
-          className="ml-auto flex items-center gap-2 text-sm font-semibold bg-[#8ad4ff]/15 hover:bg-[#8ad4ff]/25 text-[#8ad4ff] border border-[#8ad4ff]/30 px-4 py-2 rounded-lg transition-colors"
-        >
-          Convert to Notebook
-          <img src="/paper2codelogo.png" className="w-4 h-4 object-contain" alt="" />
-        </button>
-      </div>
+          <button
+            onClick={() => onConvert(paper.arxivUrl)}
+            className="ml-auto flex items-center gap-2 text-sm font-semibold bg-[#8ad4ff]/15 hover:bg-[#8ad4ff]/25 text-[#8ad4ff] border border-[#8ad4ff]/30 px-4 py-2 rounded-lg transition-colors"
+          >
+            Convert to Notebook
+            <img src="/paper2codelogo.png" className="w-4 h-4 object-contain" alt="" />
+          </button>
+        </div>
       </div>{/* end card body */}
     </motion.div>
   )
@@ -279,6 +279,10 @@ export default function Home() {
   const [arxivUrl, setArxivUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [provider, setProvider] = useState<'gemini' | 'ollama'>('gemini')
+  const [model, setModel] = useState('gemini-2.5-pro')
+  const [availableModels, setAvailableModels] = useState<{ gemini: string[]; ollama: string[] }>({ gemini: [], ollama: [] })
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState('')
   const [bannerVisible, setBannerVisible] = useState(true)
@@ -337,7 +341,7 @@ export default function Home() {
       const comment = entry.querySelector('comment')?.textContent?.trim() || ''
       const venue = journalRef || (comment.match(/(?:ICLR|NeurIPS|ICML|CVPR|ICCV|ECCV|ACL|EMNLP|AAAI|IJCAI|NAACL|INTERSPEECH|ICASSP)[^,.]*/i)?.[0] || '')
       setArxivMeta({ title, authors, abstract, categories, published, venue })
-    } catch {}
+    } catch { }
   }
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -424,7 +428,31 @@ export default function Home() {
       setArxivUrl(pendingUrl)
       sessionStorage.removeItem('pendingArxivUrl')
     }
+
+    // Load saved provider and model preferences
+    const savedProvider = localStorage.getItem('llm_provider') as 'gemini' | 'ollama' || 'gemini'
+    const savedModel = localStorage.getItem('llm_model')
+    setProvider(savedProvider)
+    if (savedModel) setModel(savedModel)
   }, [])
+
+  // Fetch available models from backend
+  useEffect(() => {
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+    fetch(`${API_URL}/api/models`)
+      .then(res => res.json())
+      .then(data => {
+        setAvailableModels(data.models)
+        if (data.ollama_base_url) setOllamaBaseUrl(data.ollama_base_url)
+        // Set default model based on provider
+        if (provider === 'gemini' && data.models.gemini.length > 0) {
+          setModel(data.models.gemini[0])
+        } else if (provider === 'ollama' && data.models.ollama.length > 0) {
+          setModel(data.models.ollama[0])
+        }
+      })
+      .catch(err => console.error('Failed to fetch models:', err))
+  }, [provider])
 
   // File drop handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -463,10 +491,32 @@ export default function Home() {
     localStorage.setItem('gemini_api_key', key)
   }
 
+  const handleProviderChange = (newProvider: 'gemini' | 'ollama') => {
+    setProvider(newProvider)
+    localStorage.setItem('llm_provider', newProvider)
+    // Update model to first available model for new provider
+    if (newProvider === 'gemini' && availableModels.gemini.length > 0) {
+      setModel(availableModels.gemini[0])
+      localStorage.setItem('llm_model', availableModels.gemini[0])
+    } else if (newProvider === 'ollama' && availableModels.ollama.length > 0) {
+      setModel(availableModels.ollama[0])
+      localStorage.setItem('llm_model', availableModels.ollama[0])
+    }
+  }
+
+  const handleModelChange = (newModel: string) => {
+    setModel(newModel)
+    localStorage.setItem('llm_model', newModel)
+  }
+
   const handleGenerate = async () => {
     // Check if either file or arXiv URL is provided
-    if ((!selectedFile && !arxivUrl.trim()) || !apiKey.trim()) {
-      setError('Please select a PDF or paste an arXiv link, and enter your API key')
+    const needsApiKey = provider === 'gemini'
+    if ((!selectedFile && !arxivUrl.trim()) || (needsApiKey && !apiKey.trim())) {
+      const msg = needsApiKey
+        ? 'Please select a PDF or paste an arXiv link, and enter your Gemini API key'
+        : 'Please select a PDF or paste an arXiv link'
+      setError(msg)
       return
     }
 
@@ -495,6 +545,8 @@ export default function Home() {
 
     const formData = new FormData()
     formData.append('api_key', apiKey.trim())
+    formData.append('provider', provider)
+    formData.append('model', model)
 
     // Determine which endpoint to use
     let endpoint = `${API_URL}/api/generate`
@@ -786,42 +838,96 @@ export default function Home() {
               />
             </div>
 
-            {/* API Key Input */}
-            <div className="bg-white/5 backdrop-blur-md border-2 border-[#8ad4ff]/40 rounded-xl p-3 space-y-3">
-              <label className="text-sm font-medium text-white/80">Gemini API Key</label>
-              <div className="flex gap-2">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={handleApiKeyChange}
-                  placeholder="AIza..."
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm font-mono focus:border-white/30 focus:outline-none transition-colors"
-                />
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="bg-white/5 border border-white/10 rounded-lg px-4 hover:bg-white/10 transition-colors"
+            {/* Model Selection */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Provider Dropdown */}
+              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3">
+                <label className="text-sm font-medium text-white/60 mb-2 block">Provider</label>
+                <select
+                  value={provider}
+                  onChange={(e) => handleProviderChange(e.target.value as 'gemini' | 'ollama')}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:border-white/30 focus:outline-none transition-colors text-white appearance-none"
+                  style={{
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: 'no-repeat',
+                    backgroundPosition: 'right 8px center',
+                    paddingRight: '28px',
+                  }}
                 >
-                  {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+                  <option value="gemini" className="bg-[#1a1a1a] text-white">Gemini</option>
+                  <option value="ollama" className="bg-[#1a1a1a] text-white">Ollama (Local)</option>
+                </select>
               </div>
-              <p className="text-xs text-white/50">
-                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[#8ad4ff] hover:text-[#8ad4ff]">
-                  Get a free API key
-                </a> from Google AI Studio - it takes 10 seconds
-              </p>
+
+              {/* Model Dropdown */}
+              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3">
+                <label className="text-sm font-medium text-white/60 mb-2 block">Model</label>
+                <select
+                  value={model}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:border-white/30 focus:outline-none transition-colors text-white appearance-none"
+                  style={{
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                    backgroundRepeat: 'no-repeat',
+                    backgroundPosition: 'right 8px center',
+                    paddingRight: '28px',
+                  }}
+                >
+                  {provider === 'gemini'
+                    ? availableModels.gemini.map(m => <option key={m} value={m} className="bg-[#1a1a1a] text-white">{m}</option>)
+                    : availableModels.ollama.map(m => <option key={m} value={m} className="bg-[#1a1a1a] text-white">{m}</option>)
+                  }
+                </select>
+              </div>
             </div>
+
+            {/* API Key Input */}
+            {provider === 'gemini' && (
+              <div className="bg-white/5 backdrop-blur-md border-2 border-[#8ad4ff]/40 rounded-xl p-3 space-y-3">
+                <label className="text-sm font-medium text-white/80">Gemini API Key</label>
+                <div className="flex gap-2">
+                  <input
+                    type={showKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={handleApiKeyChange}
+                    placeholder="AIza..."
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm font-mono focus:border-white/30 focus:outline-none transition-colors"
+                  />
+                  <button
+                    onClick={() => setShowKey(!showKey)}
+                    className="bg-white/5 border border-white/10 rounded-lg px-4 hover:bg-white/10 transition-colors"
+                  >
+                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-white/50">
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[#8ad4ff] hover:text-[#8ad4ff]">
+                    Get a free API key
+                  </a> from Google AI Studio - it takes 10 seconds
+                </p>
+              </div>
+            )}
+
+            {provider === 'ollama' && (
+              <div className="bg-white/5 backdrop-blur-md border-2 border-emerald-500/40 rounded-xl p-3">
+                <p className="text-sm text-emerald-300">
+                  <span className="font-medium">✓ Ollama Local Mode</span><br />
+                  <span className="text-xs text-emerald-300/70">Using local Ollama instance{ollamaBaseUrl ? ` at ${ollamaBaseUrl}` : ''}</span>
+                </p>
+              </div>
+            )}
 
             {/* Generate Button */}
             <button
               onClick={handleGenerate}
-              disabled={(!selectedFile && !arxivUrl.trim()) || !apiKey.trim() || isGenerating}
+              disabled={(!selectedFile && !arxivUrl.trim()) || (provider === 'gemini' && !apiKey.trim()) || isGenerating}
               className={cn(
                 "w-full rounded-xl transition-all duration-300 relative overflow-hidden group p-[2px] bg-gradient-to-r from-[#ffd78a] via-[#8ad4ff] to-[#ffa8ff] flex-shrink-0",
                 isGenerating
                   ? "shadow-xl shadow-[#8ad4ff]/40 animate-pulse cursor-not-allowed"
-                  : (!selectedFile && !arxivUrl.trim()) || !apiKey.trim()
-                  ? "opacity-50 cursor-not-allowed"
-                  : "hover:shadow-xl hover:shadow-[#8ad4ff]/40 active:scale-[0.98]"
+                  : (!selectedFile && !arxivUrl.trim()) || (provider === 'gemini' && !apiKey.trim())
+                    ? "opacity-50 cursor-not-allowed"
+                    : "hover:shadow-xl hover:shadow-[#8ad4ff]/40 active:scale-[0.98]"
               )}
             >
               {isGenerating ? (
@@ -829,7 +935,7 @@ export default function Home() {
                   <Loader2 className="w-5 h-5 animate-spin" />
                   Generating Notebook...
                 </div>
-              ) : (!selectedFile && !arxivUrl.trim()) || !apiKey.trim() ? (
+              ) : (!selectedFile && !arxivUrl.trim()) || (provider === 'gemini' && !apiKey.trim()) ? (
                 <div className="w-full h-full rounded-xl bg-[#0a0a0a] flex items-center justify-center gap-3 font-semibold text-base text-white/40 py-2.5">
                   <Zap className="w-5 h-5" />
                   Generate Notebook
@@ -962,7 +1068,7 @@ export default function Home() {
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#8ad4ff] opacity-75" />
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
-                              <span className="text-xs font-semibold text-white/80">Gemini is reading your paper...</span>
+                              <span className="text-xs font-semibold text-white/80">{provider === 'gemini' ? 'Gemini' : 'Ollama'} is reading your paper...</span>
                               <ChevronDown className={`ml-auto w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${thinkingExpanded ? 'rotate-180' : ''}`} />
                             </button>
                             {thinkingExpanded && (
@@ -1006,7 +1112,7 @@ export default function Home() {
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
                               <span className="text-xs font-semibold text-white/80">
-                                {currentStep === 1 ? "Gemini is reading your paper..." : "Gemini is designing the implementation..."}
+                                {currentStep === 1 ? `${provider === 'gemini' ? 'Gemini' : 'Ollama'} is reading your paper...` : `${provider === 'gemini' ? 'Gemini' : 'Ollama'} is designing the implementation...`}
                               </span>
                             </div>
                             <div className="px-4 py-6 flex items-center gap-3">
@@ -1119,23 +1225,23 @@ export default function Home() {
                                     {/* Extracted tag rows */}
                                     {(activity.content.research_field || activity.content.key_contributions?.length || activity.content.algorithm_names?.length || activity.content.metrics?.length || activity.content.dataset_name || activity.content.key_layers?.length || activity.content.baseline_names?.length) && (
                                       <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5">
-                                        <TagRow label="Field"     tags={activity.content.research_field ? [activity.content.research_field] : []} color="violet" />
-                                        <TagRow label="Goals"     tags={activity.content.key_contributions || []} color="pink" />
-                                        <TagRow label="Methods"   tags={activity.content.algorithm_names || []} color="sky" />
-                                        <TagRow label="Layers"    tags={activity.content.key_layers || []} color="teal" />
+                                        <TagRow label="Field" tags={activity.content.research_field ? [activity.content.research_field] : []} color="violet" />
+                                        <TagRow label="Goals" tags={activity.content.key_contributions || []} color="pink" />
+                                        <TagRow label="Methods" tags={activity.content.algorithm_names || []} color="sky" />
+                                        <TagRow label="Layers" tags={activity.content.key_layers || []} color="teal" />
                                         <TagRow label="Baselines" tags={activity.content.baseline_names || []} color="rose" />
-                                        <TagRow label="Metrics"   tags={activity.content.metrics || []} color="emerald" />
-                                        <TagRow label="Data"      tags={activity.content.dataset_name ? [activity.content.dataset_name] : []} color="amber" />
+                                        <TagRow label="Metrics" tags={activity.content.metrics || []} color="emerald" />
+                                        <TagRow label="Data" tags={activity.content.dataset_name ? [activity.content.dataset_name] : []} color="amber" />
                                       </div>
                                     )}
                                   </div>
                                 )}
                                 {activity.type === 'design' && (
                                   <div className="mt-2 pt-2 border-t border-white/5 space-y-1.5">
-                                    <TagRow label="Arch"   tags={activity.content.model_type ? [activity.content.model_type] : []} color="sky" />
-                                    <TagRow label="Dim"    tags={activity.content.embed_dim ? [`dim=${activity.content.embed_dim}`] : []} color="teal" />
+                                    <TagRow label="Arch" tags={activity.content.model_type ? [activity.content.model_type] : []} color="sky" />
+                                    <TagRow label="Dim" tags={activity.content.embed_dim ? [`dim=${activity.content.embed_dim}`] : []} color="teal" />
                                     <TagRow label="Layers" tags={activity.content.num_layers ? [`${activity.content.num_layers} layers`] : []} color="violet" />
-                                    <TagRow label="Heads"  tags={activity.content.num_heads ? [`${activity.content.num_heads} heads`] : []} color="pink" />
+                                    <TagRow label="Heads" tags={activity.content.num_heads ? [`${activity.content.num_heads} heads`] : []} color="pink" />
                                   </div>
                                 )}
                               </motion.div>
@@ -1158,33 +1264,33 @@ export default function Home() {
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#8ad4ff] opacity-75" />
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
-                              <span className="text-xs font-semibold text-white/80">Gemini is designing the implementation...</span>
+                              <span className="text-xs font-semibold text-white/80">{provider === 'gemini' ? 'Gemini' : 'Ollama'} is designing the implementation...</span>
                               <ChevronDown className={`ml-auto w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${thinkingExpanded ? 'rotate-180' : ''}`} />
                             </button>
                             {thinkingExpanded && (
-                            <div
-                              ref={thinkingScrollRef}
-                              onScroll={handleThinkingScroll}
-                              className="text-xs text-white/60 leading-relaxed p-4 max-h-48 overflow-y-auto border-t border-white/10"
-                            >
-                              <ReactMarkdown
-                                components={{
-                                  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                                  strong: ({ children }) => <strong className="text-white/90 font-semibold">{children}</strong>,
-                                  em: ({ children }) => <em className="text-[#ffa8ff]/80">{children}</em>,
-                                  h1: ({ children }) => <h1 className="text-sm font-bold text-white/90 mb-1">{children}</h1>,
-                                  h2: ({ children }) => <h2 className="text-xs font-bold text-white/80 mb-1">{children}</h2>,
-                                  h3: ({ children }) => <h3 className="text-xs font-semibold text-white/70 mb-1">{children}</h3>,
-                                  ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
-                                  ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
-                                  li: ({ children }) => <li className="text-white/60">{children}</li>,
-                                  code: ({ children }) => <code className="font-mono bg-white/10 px-1 rounded text-[#8ad4ff]">{children}</code>,
-                                }}
+                              <div
+                                ref={thinkingScrollRef}
+                                onScroll={handleThinkingScroll}
+                                className="text-xs text-white/60 leading-relaxed p-4 max-h-48 overflow-y-auto border-t border-white/10"
                               >
-                                {displayedThinking}
-                              </ReactMarkdown>
-                              <span className="inline-block w-1.5 h-3 bg-[#8ad4ff]/70 animate-pulse ml-0.5 align-middle" />
-                            </div>
+                                <ReactMarkdown
+                                  components={{
+                                    p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                                    strong: ({ children }) => <strong className="text-white/90 font-semibold">{children}</strong>,
+                                    em: ({ children }) => <em className="text-[#ffa8ff]/80">{children}</em>,
+                                    h1: ({ children }) => <h1 className="text-sm font-bold text-white/90 mb-1">{children}</h1>,
+                                    h2: ({ children }) => <h2 className="text-xs font-bold text-white/80 mb-1">{children}</h2>,
+                                    h3: ({ children }) => <h3 className="text-xs font-semibold text-white/70 mb-1">{children}</h3>,
+                                    ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+                                    ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+                                    li: ({ children }) => <li className="text-white/60">{children}</li>,
+                                    code: ({ children }) => <code className="font-mono bg-white/10 px-1 rounded text-[#8ad4ff]">{children}</code>,
+                                  }}
+                                >
+                                  {displayedThinking}
+                                </ReactMarkdown>
+                                <span className="inline-block w-1.5 h-3 bg-[#8ad4ff]/70 animate-pulse ml-0.5 align-middle" />
+                              </div>
                             )}
                           </motion.div>
                         )}
@@ -1278,83 +1384,81 @@ export default function Home() {
           transition={{ delay: 0.6 }}
           className="text-center mt-8 text-xs text-white/40"
         >
-          Powered by Gemini 2.0 Flash · Real PyTorch implementations · Bring your own API key
+          Powered by {provider === 'gemini' ? 'Gemini' : 'Ollama'} · Real PyTorch implementations · {provider === 'gemini' ? 'Bring your own API key' : 'Local LLM inference'}
         </motion.div>
 
       </div>
 
       {/* Trending Papers — full width */}
       <motion.section
-          ref={trendingSectionRef}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8 }}
-          className="mt-14 px-8 pb-16 relative z-10"
-        >
-          {/* Header + period tabs */}
-          <div className="flex items-center gap-3 mb-6 flex-wrap">
-            <h2 className="text-lg font-bold text-white tracking-tight">Trending Papers</h2>
-            <span className="text-[11px] bg-[#8ad4ff]/10 text-[#8ad4ff] border border-[#8ad4ff]/20 px-2.5 py-0.5 rounded-full font-medium">
-              HuggingFace
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              {/* Sort by stars toggle */}
-              <div className="relative group/tip">
-                <button
-                  onClick={() => setTrendingSort(s => s === 'stars' ? 'new' : 'stars')}
-                  className={`p-2 rounded-lg transition-all ${
-                    trendingSort === 'stars'
-                      ? 'bg-[#8ad4ff]/20 border border-[#8ad4ff]/30'
-                      : 'bg-white/5 hover:bg-white/10 border border-transparent'
+        ref={trendingSectionRef}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.8 }}
+        className="mt-14 px-8 pb-16 relative z-10"
+      >
+        {/* Header + period tabs */}
+        <div className="flex items-center gap-3 mb-6 flex-wrap">
+          <h2 className="text-lg font-bold text-white tracking-tight">Trending Papers</h2>
+          <span className="text-[11px] bg-[#8ad4ff]/10 text-[#8ad4ff] border border-[#8ad4ff]/20 px-2.5 py-0.5 rounded-full font-medium">
+            HuggingFace
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Sort by stars toggle */}
+            <div className="relative group/tip">
+              <button
+                onClick={() => setTrendingSort(s => s === 'stars' ? 'new' : 'stars')}
+                className={`p-2 rounded-lg transition-all ${trendingSort === 'stars'
+                  ? 'bg-[#8ad4ff]/20 border border-[#8ad4ff]/30'
+                  : 'bg-white/5 hover:bg-white/10 border border-transparent'
                   }`}
-                >
-                  <svg className={`w-4 h-4 transition-colors ${trendingSort === 'stars' ? 'text-[#8ad4ff]' : 'text-white/40'}`} viewBox="0 0 24 24" fill={trendingSort === 'stars' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                  </svg>
-                </button>
-                <div className="absolute right-0 top-full mt-2 w-56 bg-[#111] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white/70 leading-relaxed shadow-xl z-20 pointer-events-none opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150">
-                  {trendingSort === 'stars' ? 'Sorted by GitHub stars — click for newest first' : 'Sorted by newest — click for GitHub stars'}
-                  <div className="absolute -top-1.5 right-3 w-3 h-3 bg-[#111] border-l border-t border-white/10 rotate-45" />
-                </div>
+              >
+                <svg className={`w-4 h-4 transition-colors ${trendingSort === 'stars' ? 'text-[#8ad4ff]' : 'text-white/40'}`} viewBox="0 0 24 24" fill={trendingSort === 'stars' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-56 bg-[#111] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white/70 leading-relaxed shadow-xl z-20 pointer-events-none opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150">
+                {trendingSort === 'stars' ? 'Sorted by GitHub stars — click for newest first' : 'Sorted by newest — click for GitHub stars'}
+                <div className="absolute -top-1.5 right-3 w-3 h-3 bg-[#111] border-l border-t border-white/10 rotate-45" />
               </div>
-              {/* Period tabs */}
-              <div className="flex items-center gap-1 bg-white/5 rounded-xl p-1">
-                {(['day', 'week', 'month'] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setTrendingPeriod(p)}
-                    className={`text-xs font-medium px-3.5 py-1.5 rounded-lg transition-all ${
-                      trendingPeriod === p
-                        ? 'bg-[#8ad4ff]/20 text-[#8ad4ff] border border-[#8ad4ff]/30'
-                        : 'text-white/40 hover:text-white/70'
+            </div>
+            {/* Period tabs */}
+            <div className="flex items-center gap-1 bg-white/5 rounded-xl p-1">
+              {(['day', 'week', 'month'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setTrendingPeriod(p)}
+                  className={`text-xs font-medium px-3.5 py-1.5 rounded-lg transition-all ${trendingPeriod === p
+                    ? 'bg-[#8ad4ff]/20 text-[#8ad4ff] border border-[#8ad4ff]/30'
+                    : 'text-white/40 hover:text-white/70'
                     }`}
-                  >
-                    {p === 'day' ? 'Daily' : p === 'week' ? 'Weekly' : 'Monthly'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {trendingLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {Array.from({ length: 8 }).map((_, i) => <PaperCardSkeleton key={i} />)}
-            </div>
-          ) : trendingPapers.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...trendingPapers]
-                .sort((a, b) =>
-                  trendingSort === 'stars'
-                    ? (b.githubStars - a.githubStars) || (b.upvotes - a.upvotes)
-                    : (b.publishedAt > a.publishedAt ? 1 : -1)
-                )
-                .map(paper => (
-                <PaperCard key={paper.id} paper={paper} onConvert={handleConvertPaper} />
+                >
+                  {p === 'day' ? 'Daily' : p === 'week' ? 'Weekly' : 'Monthly'}
+                </button>
               ))}
             </div>
-          ) : (
-            <p className="text-sm text-white/30 text-center py-10">No papers found for this period.</p>
-          )}
+          </div>
+        </div>
+
+        {trendingLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Array.from({ length: 8 }).map((_, i) => <PaperCardSkeleton key={i} />)}
+          </div>
+        ) : trendingPapers.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...trendingPapers]
+              .sort((a, b) =>
+                trendingSort === 'stars'
+                  ? (b.githubStars - a.githubStars) || (b.upvotes - a.upvotes)
+                  : (b.publishedAt > a.publishedAt ? 1 : -1)
+              )
+              .map(paper => (
+                <PaperCard key={paper.id} paper={paper} onConvert={handleConvertPaper} />
+              ))}
+          </div>
+        ) : (
+          <p className="text-sm text-white/30 text-center py-10">No papers found for this period.</p>
+        )}
       </motion.section>
 
       {/* Fullscreen Thinking Modal */}

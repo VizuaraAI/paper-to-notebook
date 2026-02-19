@@ -14,9 +14,12 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Literal
 
+import httpx
 import nbformat
+import pypdf
+import re
 from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -32,8 +35,27 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================================
 
+# Provider types
+LLM_PROVIDER = Literal["gemini", "ollama"]
+
 # Default Gemini model
 DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_PROVIDER: LLM_PROVIDER = "gemini"
+
+# Ollama configuration
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# Ollama available models
+OLLAMA_MODELS = [
+    "gpt-oss:120b-cloud",
+    "mistral:7b",
+    "phi4:14b",
+    "qwen2.5:1.5b",
+    "deepseek-r1:14b",
+    "mistral-small:22b",
+    "mistral-small:24b",
+    "gpt-oss:20b",
+]
 
 # Token limits per pipeline step
 MAX_TOKENS_ANALYSIS = 8192
@@ -263,6 +285,95 @@ def _get_api_key(api_key: str | None = None) -> str:
     return api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") 
 
 
+def call_ollama(
+    system_prompt: str,
+    user_content: str,
+    max_tokens: int = 8192,
+    model: str = "mistral:7b",
+    base_url: str = OLLAMA_BASE_URL,
+) -> str:
+    """Make an Ollama API call and return the text response."""
+    url = f"{base_url}/api/generate"
+    
+    payload = {
+        "model": model,
+        "prompt": user_content,
+        "system": system_prompt,
+        "stream": False,
+        "options": {
+            "num_predict": max_tokens,
+            "temperature": 0.7,
+            "num_ctx": 16384,  # Increase context window for large papers
+        },
+    }
+    
+    try:
+        response = httpx.post(url, json=payload, timeout=300.0)
+        response.raise_for_status()
+        result = response.json()
+        return result.get("response", "")
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Ollama API error: {str(e)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to call Ollama: {str(e)}")
+
+
+def call_ollama_with_retry(
+    system_prompt: str,
+    user_content: str,
+    max_tokens: int = 8192,
+    model: str = "mistral:7b",
+    base_url: str = OLLAMA_BASE_URL,
+) -> str:
+    """Call Ollama API with retry logic for transient errors."""
+    last_error = None
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            return call_ollama(system_prompt, user_content, max_tokens, model, base_url)
+        except Exception as e:
+            error_str = str(e).lower()
+            last_error = e
+            
+            # Retry for transient errors
+            if any(keyword in error_str for keyword in ["connection", "timeout", "refused"]):
+                wait = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+                print(f"  Transient error. Waiting {wait}s before retry {attempt + 1}/{MAX_RETRIES}...")
+                time.sleep(wait)
+            else:
+                raise
+    
+    raise RuntimeError(f"Failed after {MAX_RETRIES} retries. Last error: {last_error}")
+
+
+def call_llm(
+    system_prompt: str,
+    user_content: list | str,
+    max_tokens: int = 8192,
+    model: str = DEFAULT_MODEL,
+    provider: LLM_PROVIDER = DEFAULT_PROVIDER,
+    api_key: str | None = None,
+    base_url: str = OLLAMA_BASE_URL,
+    on_thinking: Optional[Callable[[str], None]] = None,
+) -> str:
+    """Unified LLM call function that works with both Gemini and Ollama."""
+    if provider == "ollama":
+        # Convert user_content to string for Ollama
+        if isinstance(user_content, list):
+            content_str = ""
+            for item in user_content:
+                if isinstance(item, str):
+                    content_str += item + "\n"
+        else:
+            content_str = user_content
+        return call_ollama_with_retry(system_prompt, content_str, max_tokens, model, base_url)
+    else:  # gemini
+        # For Gemini, keep user_content as list
+        if isinstance(user_content, str):
+            user_content = [user_content]
+        return call_gemini_with_retry(system_prompt, user_content, max_tokens, model, api_key, on_thinking)
+
+
 def call_gemini(
     system_prompt: str,
     user_content: list,
@@ -344,7 +455,7 @@ def call_gemini_with_retry(
     raise RuntimeError(f"Failed after {MAX_RETRIES} retries. Last error: {last_error}")
 
 
-def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | None = None) -> dict | list:
+def parse_llm_json(raw_text: str, step_name: str, model: str, provider: LLM_PROVIDER = DEFAULT_PROVIDER, api_key: str | None = None, base_url: str = OLLAMA_BASE_URL) -> dict | list:
     """Parse JSON from LLM response, with cleanup and one repair attempt."""
     text = raw_text.strip()
 
@@ -366,12 +477,14 @@ def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | Non
             f"Error: {e}\n\n"
             f"Return ONLY the corrected valid JSON, nothing else."
         )
-        repaired = call_gemini_with_retry(
+        repaired = call_llm(
             system_prompt="You are a JSON repair tool. Return only valid JSON.",
-            user_content=[repair_prompt],
+            user_content=repair_prompt,
             max_tokens=max(len(text) // 2, 4096),
             model=model,
+            provider=provider,
             api_key=api_key,
+            base_url=base_url,
         )
         repaired = repaired.strip()
         if repaired.startswith("```"):
@@ -379,6 +492,20 @@ def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | Non
         if repaired.endswith("```"):
             repaired = repaired[:-3]
         return json.loads(repaired.strip())
+
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes for non-multimodal LLMs."""
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        print(f"Error extracting text from PDF: {e}")
+        return ""
+
 
 # ============================================================================
 # NOTEBOOK BUILDER
@@ -435,8 +562,10 @@ ThinkingCallback = Callable[[str], None]
 def run_pipeline(
     pdf_bytes: bytes,
     model: str = DEFAULT_MODEL,
+    provider: LLM_PROVIDER = DEFAULT_PROVIDER,
     on_progress: Optional[ProgressCallback] = None,
     api_key: Optional[str] = None,
+    base_url: str = OLLAMA_BASE_URL,
     on_thinking: Optional[ThinkingCallback] = None,
 ) -> bytes:
     """Run the full pipeline on PDF bytes, returning .ipynb bytes."""
@@ -445,26 +574,46 @@ def run_pipeline(
         if on_progress:
             on_progress(step, name, detail, extra)
 
-    pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+    # For Gemini, use PDF binary data. For Ollama, we'll use text-based analysis
+    pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf") if provider == "gemini" else None
 
     # Step 1: Paper Analysis
     _notify(1, "Analyzing paper", "Reading PDF and extracting structure...")
-    analysis_raw = call_gemini_with_retry(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, ANALYSIS_PROMPT],
-        max_tokens=MAX_TOKENS_ANALYSIS,
-        model=model,
-        api_key=api_key,
-        on_thinking=on_thinking,
-    )
-    analysis = parse_llm_json(analysis_raw, "paper_analysis", model, api_key=api_key)
+    
+    
+    if provider == "gemini":
+        analysis_raw = call_gemini_with_retry(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=[pdf_part, ANALYSIS_PROMPT],
+            max_tokens=MAX_TOKENS_ANALYSIS,
+            model=model,
+            api_key=api_key,
+            on_thinking=on_thinking,
+        )
+    else:  # ollama
+        # Extract text from PDF first
+        _notify(1, "Analyzing paper", "Extracting text from PDF for local analysis...")
+        paper_text = extract_text_from_pdf(pdf_bytes)
+        
+        # Combine prompt and paper text
+        combined_prompt = f"{ANALYSIS_PROMPT}\n\n==== PAPER CONTENT ====\n{paper_text[:100000]}"  # Truncate if too huge
+        
+        analysis_raw = call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=combined_prompt,
+            max_tokens=MAX_TOKENS_ANALYSIS,
+            model=model,
+            provider=provider,
+            base_url=base_url,
+        )
+    
+    analysis = parse_llm_json(analysis_raw, "paper_analysis", model, provider=provider, api_key=api_key, base_url=base_url)
     title = analysis.get("title", "Unknown Paper")
     num_algos = len(analysis.get("algorithms", []))
     # Clean up metrics: strip formula parts (anything after = or ()
-    import re as _re
     raw_metrics = analysis.get("evaluation_metrics", [])
     def _clean_metric(m: str) -> str:
-        m = _re.split(r'\s*[=(]', m)[0].strip().rstrip(',')
+        m = re.split(r'\s*[=(]', m)[0].strip().rstrip(',')
         return m
     clean_metrics = [_clean_metric(m) for m in raw_metrics[:4] if m and _clean_metric(m)]
 
@@ -491,15 +640,27 @@ def run_pipeline(
     design_prompt = DESIGN_PROMPT_TEMPLATE.format(
         analysis_json=json.dumps(analysis, indent=2)
     )
-    design_raw = call_gemini_with_retry(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, design_prompt],
-        max_tokens=MAX_TOKENS_DESIGN,
-        model=model,
-        api_key=api_key,
-        on_thinking=on_thinking,
-    )
-    design = parse_llm_json(design_raw, "toy_design", model, api_key=api_key)
+    if provider == "gemini":
+        design_raw = call_gemini_with_retry(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=[pdf_part, design_prompt],
+            max_tokens=MAX_TOKENS_DESIGN,
+            model=model,
+            api_key=api_key,
+            on_thinking=on_thinking,
+        )
+    else:  # ollama
+        design_raw = call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=design_prompt,
+            max_tokens=MAX_TOKENS_DESIGN,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    
+    design = parse_llm_json(design_raw, "toy_design", model, provider=provider, api_key=api_key, base_url=base_url)
     arch = design.get("model_architecture", {})
     _notify(2, "Designing implementation", "Architecture designed", {
         "type": "design",
@@ -516,15 +677,27 @@ def run_pipeline(
         analysis_json=json.dumps(analysis, indent=2),
         design_json=json.dumps(design, indent=2),
     )
-    cells_raw = call_gemini_with_retry(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, generate_prompt],
-        max_tokens=MAX_TOKENS_GENERATE,
-        model=model,
-        api_key=api_key,
-        on_thinking=on_thinking,
-    )
-    cells = parse_llm_json(cells_raw, "generate_cells", model, api_key=api_key)
+    if provider == "gemini":
+        cells_raw = call_gemini_with_retry(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=[pdf_part, generate_prompt],
+            max_tokens=MAX_TOKENS_GENERATE,
+            model=model,
+            api_key=api_key,
+            on_thinking=on_thinking,
+        )
+    else:  # ollama
+        cells_raw = call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=generate_prompt,
+            max_tokens=MAX_TOKENS_GENERATE,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    
+    cells = parse_llm_json(cells_raw, "generate_cells", model, provider=provider, api_key=api_key, base_url=base_url)
     num_cells = len(cells)
     code_cells = sum(1 for c in cells if c.get("cell_type") == "code")
     previews = []
@@ -549,15 +722,27 @@ def run_pipeline(
     validate_prompt = VALIDATE_PROMPT_TEMPLATE.format(
         cells_json=json.dumps(cells, indent=2)
     )
-    validated_raw = call_gemini_with_retry(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=[validate_prompt],
-        max_tokens=MAX_TOKENS_VALIDATE,
-        model=model,
-        api_key=api_key,
-        on_thinking=on_thinking,
-    )
-    validated_cells = parse_llm_json(validated_raw, "validate", model, api_key=api_key)
+    if provider == "gemini":
+        validated_raw = call_gemini_with_retry(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=[validate_prompt],
+            max_tokens=MAX_TOKENS_VALIDATE,
+            model=model,
+            api_key=api_key,
+            on_thinking=on_thinking,
+        )
+    else:  # ollama
+        validated_raw = call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=validate_prompt,
+            max_tokens=MAX_TOKENS_VALIDATE,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    
+    validated_cells = parse_llm_json(validated_raw, "validate", model, provider=provider, api_key=api_key, base_url=base_url)
     _notify(4, "Validating code", "Validation complete")
 
     # Build and return validated notebook
@@ -600,23 +785,49 @@ async def root():
         "endpoints": {
             "generate": "/api/generate",
             "download": "/api/download/{job_id}",
-            "health": "/health"
+            "health": "/health",
+            "models": "/api/models",
         }
     }
 
 
+@app.get("/api/models")
+async def get_models():
+    """Get available models by provider."""
+    return {
+        "providers": ["gemini", "ollama"],
+        "models": {
+            "gemini": [DEFAULT_MODEL],
+            "ollama": OLLAMA_MODELS,
+        },
+        "ollama_base_url": OLLAMA_BASE_URL,
+    }
+
+
 @app.post("/api/generate-from-arxiv")
-async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(...)):
+async def generate_from_arxiv(
+    request: Request,
+    arxiv_url: str = Form(...),
+    api_key: str = Form(...),
+    provider: str = Form(DEFAULT_PROVIDER),
+    model: str = Form(DEFAULT_MODEL),
+):
     """Generate notebook from arXiv URL."""
-    try:
-        import httpx
-        import re
-    except ImportError:
-        raise HTTPException(500, "httpx not installed")
 
     api_key = api_key.strip()
-    if not api_key:
-        raise HTTPException(400, "Gemini API key is required")
+    if not api_key and provider == "gemini":
+        raise HTTPException(400, "Gemini API key is required for Gemini provider")
+
+    # Validate provider
+    if provider not in ["gemini", "ollama"]:
+        raise HTTPException(400, f"Invalid provider. Must be 'gemini' or 'ollama'")
+
+    # Validate model
+    if provider == "gemini" and model != DEFAULT_MODEL:
+        # For now, only support the default Gemini model
+        pass
+    elif provider == "ollama" and model not in OLLAMA_MODELS:
+        raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(OLLAMA_MODELS)}")
 
     # Extract arXiv paper ID from URL
     match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
@@ -672,8 +883,13 @@ async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_
                 return await loop.run_in_executor(
                     None,
                     lambda: run_pipeline(
-                        pdf_bytes, DEFAULT_MODEL, on_progress,
-                        api_key=api_key, on_thinking=on_thinking,
+                        pdf_bytes,
+                        model=model,
+                        provider=provider,
+                        on_progress=on_progress,
+                        api_key=api_key,
+                        base_url=OLLAMA_BASE_URL,
+                        on_thinking=on_thinking,
                     ),
                 )
 
@@ -738,14 +954,31 @@ async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_
 
 
 @app.post("/api/generate")
-async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(...)):
+async def generate(
+    request: Request,
+    file: UploadFile = File(...),
+    api_key: str = Form(...),
+    provider: str = Form(DEFAULT_PROVIDER),
+    model: str = Form(DEFAULT_MODEL),
+):
     """Generate notebook from PDF with streaming progress."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "File must be a PDF")
 
     api_key = api_key.strip()
-    if not api_key:
-        raise HTTPException(400, "Gemini API key is required")
+    if not api_key and provider == "gemini":
+        raise HTTPException(400, "Gemini API key is required for Gemini provider")
+
+    # Validate provider
+    if provider not in ["gemini", "ollama"]:
+        raise HTTPException(400, f"Invalid provider. Must be 'gemini' or 'ollama'")
+
+    # Validate model
+    if provider == "gemini" and model != DEFAULT_MODEL:
+        # For now, only support the default Gemini model
+        pass
+    elif provider == "ollama" and model not in OLLAMA_MODELS:
+        raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(OLLAMA_MODELS)}")
 
     pdf_bytes = await file.read()
     size_mb = len(pdf_bytes) / (1024 * 1024)
@@ -776,8 +1009,13 @@ async def generate(request: Request, file: UploadFile = File(...), api_key: str 
                 return await loop.run_in_executor(
                     None,
                     lambda: run_pipeline(
-                        pdf_bytes, DEFAULT_MODEL, on_progress,
-                        api_key=api_key, on_thinking=on_thinking,
+                        pdf_bytes,
+                        model=model,
+                        provider=provider,
+                        on_progress=on_progress,
+                        api_key=api_key,
+                        base_url=OLLAMA_BASE_URL,
+                        on_thinking=on_thinking,
                     ),
                 )
 
@@ -787,7 +1025,6 @@ async def generate(request: Request, file: UploadFile = File(...), api_key: str 
             try:
                 event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
 
-                # Handle thinking events
                 if event[0] == "thinking":
                     data = json.dumps({"text": event[1]})
                     yield f"event: thinking\ndata: {data}\n\n"
