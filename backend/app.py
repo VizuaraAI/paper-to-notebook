@@ -45,17 +45,9 @@ DEFAULT_PROVIDER: LLM_PROVIDER = "gemini"
 # Ollama configuration
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
-# Ollama available models
-OLLAMA_MODELS = [
-    "gpt-oss:120b-cloud",
-    "mistral:7b",
-    "phi4:14b",
-    "qwen2.5:1.5b",
-    "deepseek-r1:14b",
-    "mistral-small:22b",
-    "mistral-small:24b",
-    "gpt-oss:20b",
-]
+# Cache for Ollama models
+_ollama_models_cache = None
+_ollama_models_cache_time = 0
 
 # Token limits per pipeline step
 MAX_TOKENS_ANALYSIS = 8192
@@ -455,6 +447,33 @@ def call_gemini_with_retry(
     raise RuntimeError(f"Failed after {MAX_RETRIES} retries. Last error: {last_error}")
 
 
+def get_ollama_models(base_url: str = OLLAMA_BASE_URL) -> list:
+    """
+    Fetch available models from Ollama API.
+    Returns a list of model names from OLLAMA_BASE_URL/api/tags
+    """
+    global _ollama_models_cache, _ollama_models_cache_time
+    
+    # Use cache if available and fresh (less than 5 minutes old)
+    current_time = time.time()
+    if _ollama_models_cache is not None and (current_time - _ollama_models_cache_time) < 300:
+        return _ollama_models_cache
+    
+    try:
+        response = httpx.get(f"{base_url}/api/tags", timeout=5.0)
+        if response.status_code == 200:
+            data = response.json()
+            models = [model.get("name") for model in data.get("models", []) if model.get("name")]
+            _ollama_models_cache = models
+            _ollama_models_cache_time = current_time
+            return models
+    except Exception as e:
+        print(f"Warning: Failed to fetch Ollama models: {e}")
+    
+    # Return empty list if fetch fails (Ollama not available)
+    return []
+
+
 def parse_llm_json(raw_text: str, step_name: str, model: str, provider: LLM_PROVIDER = DEFAULT_PROVIDER, api_key: str | None = None, base_url: str = OLLAMA_BASE_URL) -> dict | list:
     """Parse JSON from LLM response, with cleanup and one repair attempt."""
     text = raw_text.strip()
@@ -794,13 +813,15 @@ async def root():
 @app.get("/api/models")
 async def get_models():
     """Get available models by provider."""
+    ollama_models = get_ollama_models(OLLAMA_BASE_URL)
     return {
         "providers": ["gemini", "ollama"],
         "models": {
             "gemini": [DEFAULT_MODEL],
-            "ollama": OLLAMA_MODELS,
+            "ollama": ollama_models,
         },
         "ollama_base_url": OLLAMA_BASE_URL,
+        "ollama_available": len(ollama_models) > 0,
     }
 
 
@@ -826,8 +847,12 @@ async def generate_from_arxiv(
     if provider == "gemini" and model != DEFAULT_MODEL:
         # For now, only support the default Gemini model
         pass
-    elif provider == "ollama" and model not in OLLAMA_MODELS:
-        raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(OLLAMA_MODELS)}")
+    elif provider == "ollama":
+        ollama_models = get_ollama_models(OLLAMA_BASE_URL)
+        if not ollama_models:
+            raise HTTPException(503, "Ollama service is not available. Please check OLLAMA_BASE_URL")
+        if model not in ollama_models:
+            raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(ollama_models)}")
 
     # Extract arXiv paper ID from URL
     match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
@@ -977,8 +1002,12 @@ async def generate(
     if provider == "gemini" and model != DEFAULT_MODEL:
         # For now, only support the default Gemini model
         pass
-    elif provider == "ollama" and model not in OLLAMA_MODELS:
-        raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(OLLAMA_MODELS)}")
+    elif provider == "ollama":
+        ollama_models = get_ollama_models(OLLAMA_BASE_URL)
+        if not ollama_models:
+            raise HTTPException(503, "Ollama service is not available. Please check OLLAMA_BASE_URL")
+        if model not in ollama_models:
+            raise HTTPException(400, f"Invalid Ollama model. Must be one of: {', '.join(ollama_models)}")
 
     pdf_bytes = await file.read()
     size_mb = len(pdf_bytes) / (1024 * 1024)
