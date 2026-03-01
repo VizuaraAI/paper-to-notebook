@@ -521,6 +521,10 @@ export default function Home() {
     const formData = new FormData()
     formData.append('api_key', apiKey.trim())
     formData.append('model', selectedModel)
+    const currentModelInfo = availableModels.find(m => m.id === selectedModel)
+    if (currentModelInfo?.max_output) {
+      formData.append('model_max_output', String(currentModelInfo.max_output))
+    }
 
     // Determine which endpoint to use
     let endpoint = `${API_URL}/api/generate`

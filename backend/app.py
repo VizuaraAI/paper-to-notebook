@@ -45,6 +45,13 @@ RETRY_DELAYS = [5, 15, 30]
 MAX_PDF_SIZE_MB = 30
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", str(MAX_PDF_SIZE_MB)))
 
+# Approximate char limit for paper text to avoid exceeding model context windows.
+# ~80k chars ≈ ~20k tokens, leaving room for prompts + output within 128k context models.
+MAX_PAPER_TEXT_CHARS = 80_000
+
+# In-memory cache for /api/models
+_models_cache: dict = {"data": None, "expires": 0}
+
 # ============================================================================
 # PROMPTS
 # ============================================================================
@@ -479,6 +486,7 @@ def run_pipeline(
     on_progress: Optional[ProgressCallback] = None,
     api_key: Optional[str] = None,
     on_thinking: Optional[ThinkingCallback] = None,
+    model_max_output: int = 0,
 ) -> bytes:
     """Run the full pipeline on PDF bytes, returning .ipynb bytes."""
 
@@ -486,14 +494,24 @@ def run_pipeline(
         if on_progress:
             on_progress(step, name, detail, extra)
 
+    def _clamp(desired: int) -> int:
+        """Clamp max_tokens to model's limit if known."""
+        if model_max_output > 0:
+            return min(desired, model_max_output)
+        return desired
+
     paper_text = extract_pdf_text(pdf_bytes)
+
+    # Truncate to avoid exceeding model context windows
+    if len(paper_text) > MAX_PAPER_TEXT_CHARS:
+        paper_text = paper_text[:MAX_PAPER_TEXT_CHARS] + "\n\n[... truncated due to length ...]"
 
     # Step 1: Paper Analysis
     _notify(1, "Analyzing paper", "Reading PDF and extracting structure...")
     analysis_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
         user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{ANALYSIS_PROMPT}",
-        max_tokens=MAX_TOKENS_ANALYSIS,
+        max_tokens=_clamp(MAX_TOKENS_ANALYSIS),
         model=model,
         api_key=api_key,
         on_thinking=on_thinking,
@@ -532,7 +550,7 @@ def run_pipeline(
     design_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
         user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{design_prompt}",
-        max_tokens=MAX_TOKENS_DESIGN,
+        max_tokens=_clamp(MAX_TOKENS_DESIGN),
         model=model,
         api_key=api_key,
         on_thinking=on_thinking,
@@ -560,7 +578,7 @@ def run_pipeline(
     cells_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
         user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{generate_prompt}",
-        max_tokens=MAX_TOKENS_GENERATE,
+        max_tokens=_clamp(MAX_TOKENS_GENERATE),
         model=model,
         api_key=api_key,
         on_thinking=on_thinking,
@@ -587,7 +605,7 @@ def run_pipeline(
     validated_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
         user_content=validate_prompt,
-        max_tokens=MAX_TOKENS_VALIDATE,
+        max_tokens=_clamp(MAX_TOKENS_VALIDATE),
         model=model,
         api_key=api_key,
         on_thinking=on_thinking,
@@ -619,9 +637,9 @@ _generation_semaphore = asyncio.Semaphore(3)
 # SHARED SSE STREAM
 # ============================================================================
 
-async def _stream_pipeline(pdf_bytes: bytes, model: str, api_key: str, job_id: str):
+async def _stream_pipeline(pdf_bytes: bytes, model: str, api_key: str, job_id: str, model_max_output: int = 0):
     """Shared SSE generator that runs the pipeline and streams progress events."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     progress_queue: asyncio.Queue = asyncio.Queue()
     draft_id = job_id + "_draft"
 
@@ -639,7 +657,7 @@ async def _stream_pipeline(pdf_bytes: bytes, model: str, api_key: str, job_id: s
         async with _generation_semaphore:
             return await loop.run_in_executor(
                 None,
-                lambda: run_pipeline(pdf_bytes, model, on_progress, api_key=api_key, on_thinking=on_thinking),
+                lambda: run_pipeline(pdf_bytes, model, on_progress, api_key=api_key, on_thinking=on_thinking, model_max_output=model_max_output),
             )
 
     task = asyncio.create_task(run_in_thread())
@@ -683,8 +701,14 @@ async def _stream_pipeline(pdf_bytes: bytes, model: str, api_key: str, job_id: s
             data["extra"] = extra
         yield f"event: progress\ndata: {json.dumps(data)}\n\n"
 
-    # Get result — errors propagate naturally to the SSE stream
-    notebook_bytes = task.result()
+    # Send result or error to the client
+    try:
+        notebook_bytes = task.result()
+    except Exception as e:
+        print(f"Pipeline error: {e}")
+        yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        return
+
     output_path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
     with open(output_path, "wb") as f:
         f.write(notebook_bytes)
@@ -706,11 +730,21 @@ async def root():
 
 @app.get("/api/models")
 async def list_models():
-    """Fetch available models from OpenRouter."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get("https://openrouter.ai/api/v1/models", timeout=10.0)
-        resp.raise_for_status()
-        all_models = resp.json().get("data", [])
+    """Fetch available models from OpenRouter with 5-minute in-memory cache."""
+    now = time.time()
+    if _models_cache["data"] and now < _models_cache["expires"]:
+        return _models_cache["data"]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("https://openrouter.ai/api/v1/models", timeout=10.0)
+            resp.raise_for_status()
+            all_models = resp.json().get("data", [])
+    except Exception:
+        # Return stale cache on failure, or empty list if no cache
+        if _models_cache["data"]:
+            return _models_cache["data"]
+        return {"models": [], "default": DEFAULT_MODEL}
 
     models = []
     for m in all_models:
@@ -721,7 +755,7 @@ async def list_models():
         if ctx < 16000:
             continue
         max_out = m.get("top_provider", {}).get("max_completion_tokens") or 0
-        if max_out < 4096:
+        if max_out < 16384:
             continue
         model_id = m.get("id", "")
         if any(skip in model_id for skip in ["/image", "tts", "embed", "whisper", "vision-only"]):
@@ -733,7 +767,7 @@ async def list_models():
 
         models.append({
             "id": model_id,
-            "name": m.get("name", model_id),
+            "name": m.get("name") or model_id,
             "provider": provider,
             "context_length": ctx,
             "max_output": max_out,
@@ -741,18 +775,21 @@ async def list_models():
         })
 
     models.sort(key=lambda x: (x["provider"], x["name"]))
-    return {"models": models, "default": DEFAULT_MODEL}
+    result = {"models": models, "default": DEFAULT_MODEL}
+    _models_cache["data"] = result
+    _models_cache["expires"] = now + 300  # 5 minute TTL
+    return result
 
 
 @app.post("/api/generate")
-async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL)):
+async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(""), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
     """Generate notebook from uploaded PDF."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "File must be a PDF")
 
-    api_key = api_key.strip()
+    api_key = _get_api_key(api_key.strip() or None)
     if not api_key:
-        raise HTTPException(400, "OpenRouter API key is required")
+        raise HTTPException(400, "OpenRouter API key is required. Provide it via the frontend or set OPENROUTER_API_KEY on the server.")
 
     pdf_bytes = await file.read()
     size_mb = len(pdf_bytes) / (1024 * 1024)
@@ -761,18 +798,18 @@ async def generate(request: Request, file: UploadFile = File(...), api_key: str 
 
     job_id = uuid.uuid4().hex[:12]
     return StreamingResponse(
-        _stream_pipeline(pdf_bytes, model, api_key, job_id),
+        _stream_pipeline(pdf_bytes, model, api_key, job_id, model_max_output),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 @app.post("/api/generate-from-arxiv")
-async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL)):
+async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(""), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
     """Generate notebook from arXiv URL."""
-    api_key = api_key.strip()
+    api_key = _get_api_key(api_key.strip() or None)
     if not api_key:
-        raise HTTPException(400, "OpenRouter API key is required")
+        raise HTTPException(400, "OpenRouter API key is required. Provide it via the frontend or set OPENROUTER_API_KEY on the server.")
 
     match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
     if not match:
@@ -795,7 +832,7 @@ async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_
 
     job_id = uuid.uuid4().hex[:12]
     return StreamingResponse(
-        _stream_pipeline(pdf_bytes, model, api_key, job_id),
+        _stream_pipeline(pdf_bytes, model, api_key, job_id, model_max_output),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
