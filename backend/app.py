@@ -2,7 +2,7 @@
 """
 Paper to Notebook - Backend API
 Single-file FastAPI application for deploying on Railway.
-Converts research paper PDFs into executable Jupyter notebooks using Gemini LLM.
+Converts research paper PDFs into executable Jupyter notebooks using LLM via OpenRouter.
 """
 from __future__ import annotations
 
@@ -10,248 +10,281 @@ import asyncio
 import io
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
-from pathlib import Path
 from typing import Callable, Optional
 
+import httpx
 import nbformat
+import pdfplumber
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
-from google import genai
-from google.genai import types
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
-from dotenv import load_dotenv
+from openai import OpenAI
 
-# Load environment variables
 load_dotenv()
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-# Default Gemini model
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "google/gemini-2.5-pro"
 
-# Token limits per pipeline step
-MAX_TOKENS_ANALYSIS = 8192
-MAX_TOKENS_DESIGN = 8192
+MAX_TOKENS_ANALYSIS = 12288
+MAX_TOKENS_DESIGN = 12288
 MAX_TOKENS_GENERATE = 65536
 MAX_TOKENS_VALIDATE = 65536
 
-# Retry configuration
 MAX_RETRIES = 3
-RETRY_DELAYS = [5, 15, 30]  # seconds
+RETRY_DELAYS = [5, 15, 30]
 
-# PDF constraints
 MAX_PDF_SIZE_MB = 30
-
-# Upload configuration
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", str(MAX_PDF_SIZE_MB)))
-
-
 
 # ============================================================================
 # PROMPTS
 # ============================================================================
 
 SYSTEM_PROMPT = (
-    "You are an expert research engineer and educator who faithfully implements "
-    "academic papers as runnable, educational Python code. You use real ML components "
-    "(PyTorch, Transformer layers, actual training loops) at a reduced scale that "
-    "runs on CPU. You prioritize faithful replication of the paper's architecture "
-    "and algorithms while making the code deeply educational with clear explanations, "
-    "verbose logging, and insightful visualizations."
+    "You are an expert research engineer and educator who converts academic papers "
+    "into runnable, educational Python notebooks. You adapt your approach to the "
+    "paper's domain: PyTorch for deep learning, NumPy/SciPy for algorithms and math, "
+    "simulations for systems papers, etc. Your priorities:\n"
+    "1. Faithfully replicate the paper's core ideas and algorithms\n"
+    "2. Write complete, working code — no placeholders, no TODOs, no 'pass'\n"
+    "3. Everything runs on a standard laptop (CPU only, no GPU, no large downloads)\n"
+    "4. Explain every step clearly for someone learning the topic\n"
+    "5. Include visualizations that reveal what the code is doing\n"
+    "6. All output must be valid JSON — escape newlines as \\n and quotes as \\\" in strings"
 )
 
 ANALYSIS_PROMPT = """\
-Read this research paper carefully and extract a thorough structured analysis.
+Read this research paper carefully and extract a structured analysis.
 
-Return a JSON object with EXACTLY these fields:
+IMPORTANT: The paper may be about ANY topic — deep learning, classical algorithms, \
+systems, mathematics, optimization, robotics, etc. Extract what is relevant and use \
+null or empty arrays for fields that don't apply to this paper's domain.
+
+Return a JSON object with these fields:
 
 {
   "title": "Full paper title",
   "authors": "Author list as a single string",
-  "abstract_summary": "2-3 sentence plain English summary of the paper",
-  "problem_statement": "What problem does the paper solve? (2-3 sentences, no jargon)",
-  "key_insight": "The core idea or innovation in one sentence",
+  "paper_type": "One of: deep_learning, machine_learning, reinforcement_learning, nlp, computer_vision, optimization, algorithms, systems, theoretical, survey, other",
+  "abstract_summary": "2-3 sentence plain English summary accessible to a non-expert",
+  "problem_statement": "What problem does the paper solve? (2-3 sentences, avoid jargon)",
+  "key_insight": "The core innovation in one sentence",
   "algorithms": [
     {
-      "name": "Algorithm name (e.g., 'GRPO', 'DPO', 'LLaDA Pre-training', etc.)",
-      "description": "What this algorithm does in plain English",
-      "inputs": ["list of inputs with types and shapes where applicable"],
-      "outputs": ["list of outputs with types and shapes where applicable"],
-      "steps": ["ordered list of DETAILED algorithmic steps — include math operations, loss functions, gradient updates"],
+      "name": "Algorithm or method name",
+      "description": "What it does in plain English",
+      "inputs": ["list of inputs with types/shapes where applicable"],
+      "outputs": ["list of outputs with types/shapes where applicable"],
+      "steps": ["ordered list of DETAILED steps — math operations, loss functions, gradient updates, pseudocode logic"],
       "is_core": true,
-      "equations": ["key equations used in this algorithm, in LaTeX or descriptive form"],
-      "architecture_details": "Describe the neural network architecture used (layers, dimensions, attention type, etc.)"
+      "equations": ["key equations in LaTeX or descriptive form"]
     }
   ],
   "baselines": [
     {
       "name": "Baseline method name",
-      "description": "Detailed description of how it works, including its loss function and training procedure"
+      "description": "How it works — loss function, training procedure if applicable"
     }
   ],
-  "evaluation_metrics": ["list of metrics used to evaluate, with formulas if available"],
-  "key_equations": ["ALL important equations from the paper described precisely"],
+  "evaluation_metrics": ["metrics used to evaluate, with formulas if available"],
+  "key_equations": ["ALL important equations described precisely — include variable definitions"],
   "model_architecture": {
-    "type": "Transformer/CNN/RNN/etc.",
-    "key_layers": ["list of layer types used"],
-    "dimensions": "hidden dim, num heads, num layers mentioned in paper",
-    "special_features": "any non-standard architectural choices"
+    "type": "Transformer/CNN/RNN/GNN/MLP/None/etc. (use None for non-ML papers)",
+    "key_layers": ["layer types used, or empty for non-ML"],
+    "dimensions": "hidden dim, num heads, num layers from paper, or null",
+    "special_features": "non-standard architectural choices, or null"
   },
   "dataset": {
-    "name": "Dataset name if mentioned",
+    "name": "Dataset name, or null if not applicable",
     "description": "Brief description",
-    "preprocessing": "Any special preprocessing steps"
+    "preprocessing": "Special preprocessing steps"
   },
-  "research_field": "Primary research field in 2-4 words (e.g., 'Natural Language Processing', 'Computer Vision', 'Reinforcement Learning', 'Graph Neural Networks')",
-  "key_contributions": ["Contribution in 4-7 words", "Contribution in 4-7 words", "Contribution in 4-7 words"]
+  "research_field": "2-4 word field name (e.g., 'Natural Language Processing', 'Graph Algorithms', 'Distributed Systems')",
+  "key_contributions": ["Contribution in 4-7 words", "...", "..."],
+  "implementation_approach": "Suggest what Python libraries and approach best demonstrate this paper (e.g., 'PyTorch neural network with synthetic data', 'NumPy matrix operations with visualization', 'NetworkX graph algorithm on generated graphs', 'simulation with matplotlib animation')"
 }
 
-Be exhaustive. Extract every algorithmic detail, equation, and architectural choice.
+RULES:
+- Be exhaustive on algorithms, equations, and step-by-step details
+- For non-ML papers, set model_architecture.type to "None" and leave ML-specific fields as null/empty
+- Do NOT hallucinate — if the paper doesn't mention baselines or datasets, use empty arrays/null
+- Return ONLY valid JSON — no trailing commas, no comments, no text outside the JSON
 """
 
 DESIGN_PROMPT_TEMPLATE = """\
-You are given the analysis of a research paper (below). Your job is to design a **toy implementation plan** for a Jupyter notebook that demonstrates the paper's core ideas using real PyTorch code at a small, CPU-runnable scale.
+Design a **toy implementation plan** for a Jupyter notebook that demonstrates this paper's core ideas with working Python code.
 
 **Paper Analysis:**
 ```json
 {analysis_json}
 ```
 
-Return a JSON object with:
+Adapt the plan to the paper's domain:
+- **Deep learning / ML papers**: Use PyTorch with small models, synthetic data, actual training loops
+- **Algorithm papers**: Use NumPy/SciPy, implement the algorithm on toy inputs, benchmark against a naive approach
+- **Systems papers**: Simulate the system behavior, measure and plot performance characteristics
+- **Math / theoretical papers**: Implement key results numerically, visualize theorems and bounds
+- **Optimization papers**: Implement the optimizer, show convergence on standard test functions
+
+Return a JSON object:
 
 {{
-  "notebook_title": "A clear, descriptive title for the notebook",
+  "notebook_title": "Clear, descriptive title for the notebook",
+  "pip_dependencies": ["list", "of", "pip", "packages", "needed"],
   "model_architecture": {{
-    "type": "Transformer/CNN/RNN/etc.",
-    "embed_dim": 64,
-    "num_layers": 2,
-    "num_heads": 4,
-    "vocab_size": 1000,
-    "max_seq_len": 32,
-    "other_params": {{}}
+    "type": "What we're building (e.g., 'Transformer', 'CNN', 'Graph Algorithm', 'Optimizer', 'Simulation', 'None')",
+    "embed_dim": null,
+    "num_layers": null,
+    "num_heads": null,
+    "description": "Brief description of the implementation architecture and key parameters — use small/toy values"
   }},
-  "synthetic_data": {{
-    "description": "What kind of synthetic/toy data to generate",
-    "size": "e.g., 500 training samples, 100 test samples",
-    "generation_method": "How to create it (random, simple patterns, etc.)"
+  "data_plan": {{
+    "description": "What data to use — MUST be synthetic or generated in code, no external downloads",
+    "size": "e.g., 500 samples — keep small for fast execution",
+    "generation_method": "How to create it"
   }},
-  "training_config": {{
-    "num_epochs": 10,
-    "batch_size": 16,
-    "learning_rate": 0.001,
-    "optimizer": "Adam",
-    "loss_function": "CrossEntropyLoss or custom"
+  "execution_plan": {{
+    "description": "How to run the main experiment",
+    "iterations": "number of epochs/steps/iterations — keep small enough to finish in under 2 minutes",
+    "what_to_measure": "What metrics or outputs to track"
   }},
-  "mock_models": [
+  "sections": [
     {{
-      "name": "BaselineModel",
-      "purpose": "What baseline this represents",
-      "architecture_summary": "Brief description of layers"
-    }},
+      "title": "Section title",
+      "cell_types": "markdown | code | both",
+      "description": "What this section covers and why it matters",
+      "key_elements": ["specific things to implement in this section"]
+    }}
+  ],
+  "comparisons": [
     {{
-      "name": "PaperModel",
-      "purpose": "The paper's proposed method",
-      "architecture_summary": "Brief description"
+      "name": "What to compare (e.g., 'Baseline vs Paper Method', 'Before vs After Optimization')",
+      "metric": "How to measure the comparison"
     }}
   ],
   "visualizations": [
     {{
-      "type": "training curves",
-      "description": "Loss over time for both models"
-    }},
-    {{
-      "type": "metric comparison",
-      "description": "Bar chart comparing baseline vs paper method"
+      "type": "line plot / bar chart / heatmap / scatter / animation / etc.",
+      "description": "What it shows and what insight it provides"
     }}
-  ],
-  "implementation_notes": "Any important considerations or simplifications"
+  ]
 }}
 
-Make it realistic but small-scale. Focus on educational clarity.
+CONSTRAINTS:
+- Only use pip-installable packages (no custom C extensions, no system-level dependencies)
+- No external data downloads — generate ALL data synthetically or use tiny built-in datasets (e.g., sklearn.datasets)
+- Everything must run on CPU in under 2 minutes total
+- Plan 15-25 notebook cells for a thorough but focused implementation
+- Sections should build on each other incrementally — each cell should work given all prior cells
+- Always include: (1) overview/intro, (2) imports & setup, (3) core implementation, (4) experiment/demo, (5) visualization, (6) summary
+- Return ONLY valid JSON — no trailing commas, no comments
 """
 
 GENERATE_PROMPT_TEMPLATE = """\
-You have analyzed a research paper and designed a toy implementation plan. Now generate the **complete Jupyter notebook** as a list of cells.
+Generate a **complete, runnable Jupyter notebook** as a JSON array of cells.
 
 **Paper Analysis:**
 ```json
 {analysis_json}
 ```
 
-**Design Plan:**
+**Implementation Plan:**
 ```json
 {design_json}
 ```
 
-Return a JSON array of notebook cells following this **exact 11-section structure**:
+Follow the sections defined in the implementation plan above. For each planned section, \
+create one or more notebook cells (markdown for explanations, code for implementation).
 
-1. **Title & Paper Overview** (markdown) — Paper title, authors, one-paragraph summary
-2. **Problem Intuition** (markdown) — Explain the problem in simple terms with an analogy
-3. **Imports & Setup** (code) — All imports, set random seeds, device setup
-4. **Dataset & Tokenization** (code + markdown) — Generate synthetic data, show samples
-5. **Model Architecture** (code + markdown) — Define the PyTorch model class(es)
-6. **Loss Function & Training Utilities** (code) — Loss function, training loop helper
-7. **Baseline Implementation** (code + markdown) — Simple baseline model
-8. **Paper's Main Algorithm — Training** (code + markdown) — Implement paper's method
-9. **Inference / Generation** (code + markdown) — Run inference, show predictions
-10. **Full Experiment & Evaluation** (code) — Train both models, compute metrics
-11. **Visualizations** (code) — Plot training curves, comparison charts
-12. **Summary & Next Steps** (markdown) — What we learned, ideas for extension
-
-Each cell must be:
+Each cell in the JSON array:
 ```json
 {{
-  "cell_type": "code" | "markdown",
-  "source": "the full cell content as a string"
+  "cell_type": "code" or "markdown",
+  "source": "cell content as a single string"
 }}
 ```
 
-**CRITICAL REQUIREMENTS:**
-- Use REAL PyTorch (torch.nn.Module, torch.optim, actual training loops)
-- NO placeholders like "# TODO" or "pass" — write complete working code
-- Include plenty of print statements for educational insight
-- Add comments explaining key lines
-- Make it runnable on CPU with small data
-- Follow the 11-section structure exactly
+**CODE REQUIREMENTS:**
+- Complete, working Python — NO placeholders, NO "# TODO", NO "pass", NO "..." stubs
+- Every variable defined before use, every function fully implemented
+- Only use packages listed in the plan's pip_dependencies
+- Set random seeds early (random.seed, np.random.seed, torch.manual_seed if using PyTorch) for reproducibility
+- Include print() statements that show intermediate results, shapes, and progress
+- Add inline comments explaining non-obvious logic
+- CPU only — no .cuda(), no .to('cuda'), no GPU device transfers
+- No external file/data downloads — generate everything in code
+- Keep data sizes and iteration counts small so the notebook runs in under 2 minutes
 
-Return ONLY the JSON array of cells, no extra text.
+**MARKDOWN REQUIREMENTS:**
+- Explain WHAT the code does and WHY — not just describe it
+- Use analogies and plain English intuition before introducing math
+- Reference the original paper's contributions where relevant
+- Use LaTeX ($...$) for equations when helpful
+
+**NOTEBOOK FLOW:**
+- Start: title cell (paper name, authors, what this notebook demonstrates)
+- Then: imports and setup (all imports in one cell, seeds, hyperparameters)
+- Build incrementally: data preparation → core implementation → run experiment → evaluate → visualize
+- End: summary of results, what we learned, ideas for extending this work
+
+**JSON FORMATTING — CRITICAL, ERRORS HERE WILL BREAK PARSING:**
+- Code newlines MUST be \\n (escaped newline), NOT literal line breaks inside the JSON string
+- Double quotes in code MUST be \\" (escaped quote)
+- Backslashes in code MUST be \\\\ (escaped backslash)
+- No trailing commas after the last element in arrays or objects
+- The output must be a single valid JSON array — no text before [ or after ]
+
+Return ONLY the JSON array of cells.
 """
 
 VALIDATE_PROMPT_TEMPLATE = """\
-You are given a list of Jupyter notebook cells. Your job is to **validate and repair** them.
+Validate and repair these Jupyter notebook cells. The notebook implements a research paper.
 
 **Cells:**
 ```json
 {cells_json}
 ```
 
-Check for:
-1. **Undefined variables** — every variable must be defined before use
-2. **Missing imports** — all libraries must be imported
-3. **Syntax errors** — valid Python syntax
-4. **Logical flow** — cells execute in order without errors
-5. **No placeholders** — no "# TODO", "pass", or "..." in critical code
-6. **Complete implementations** — all functions fully implemented
+**Check for ALL of these issues and fix them:**
 
-Return the **corrected cells** as a JSON array with the same structure:
+1. **Import errors** — every package/module is imported before use, imports are in the first code cell
+2. **Undefined variables** — every variable is defined before it's referenced, across all cells in order
+3. **Syntax errors** — all Python code is syntactically valid (check quotes, brackets, colons, indentation)
+4. **Logical flow** — cells produce correct results when run top-to-bottom sequentially
+5. **No placeholders** — no "# TODO", "pass", or "..." standing in for real code
+6. **Complete functions** — every function/class has a full working implementation, not stubs
+7. **Meaningful output** — training loops print loss that should decrease; experiments compute and display results
+8. **Package availability** — only standard pip packages (torch, numpy, matplotlib, scikit-learn, scipy, networkx, etc.)
+9. **CPU compatibility** — no .cuda(), .to('cuda'), or GPU-specific code anywhere
+10. **Reproducibility** — random seeds are set before any random operations
+11. **No downloads** — no urllib, requests, wget, or any external data fetching in code cells
+12. **Correct math** — loss functions, gradient computations, and algorithm steps match standard implementations
+
+**Fix every issue found. If cells are already correct, return them unchanged.**
+
+Return the corrected cells as a JSON array:
 ```json
 [
   {{
-    "cell_type": "code" | "markdown",
-    "source": "corrected content"
-  }},
-  ...
+    "cell_type": "code" or "markdown",
+    "source": "corrected cell content"
+  }}
 ]
 ```
 
-Fix any issues you find. If cells are already correct, return them unchanged.
-Return ONLY the JSON array, no extra text.
+**JSON FORMATTING:**
+- Code newlines as \\n, quotes as \\", backslashes as \\\\
+- No trailing commas
+- Return ONLY the JSON array — no text before [ or after ]
 """
 
 # ============================================================================
@@ -259,81 +292,90 @@ Return ONLY the JSON array, no extra text.
 # ============================================================================
 
 def _get_api_key(api_key: str | None = None) -> str:
-    """Get API key from parameter, environment, or fallback."""
-    return api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") 
+    return api_key or os.environ.get("OPENROUTER_API_KEY") or ""
 
 
-def call_gemini(
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text content from PDF bytes using pdfplumber."""
+    text_parts = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(f"--- Page {i + 1} ---\n{page_text}")
+    full_text = "\n\n".join(text_parts)
+    if not full_text.strip():
+        raise ValueError("Could not extract text from PDF. The PDF may be image-based or corrupted.")
+    return full_text
+
+
+def call_llm(
     system_prompt: str,
-    user_content: list,
+    user_content: str,
     max_tokens: int = 8192,
     model: str = DEFAULT_MODEL,
     api_key: str | None = None,
     on_thinking: Optional[Callable[[str], None]] = None,
 ) -> str:
-    """Make a Gemini API call and return the text response."""
-    client = genai.Client(api_key=_get_api_key(api_key))
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        max_output_tokens=max_tokens,
-        temperature=0.7,
+    """Make an OpenRouter API call and return the text response."""
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=_get_api_key(api_key),
     )
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
     if on_thinking:
-        thinking_config = types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            max_output_tokens=max_tokens,
-            temperature=0.7,
-            thinking_config=types.ThinkingConfig(include_thoughts=True),
-        )
         full_text = ""
-        for chunk in client.models.generate_content_stream(
-            model=model, contents=user_content, config=thinking_config
-        ):
-            try:
-                if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                    for part in chunk.candidates[0].content.parts:
-                        if getattr(part, 'thought', False):
-                            if part.text:
-                                on_thinking(part.text)
-                        else:
-                            if part.text:
-                                full_text += part.text
-            except (AttributeError, IndexError):
-                if hasattr(chunk, 'text') and chunk.text:
-                    full_text += chunk.text
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            stream=True,
+        )
+        chunk_buffer = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                full_text += delta.content
+                chunk_buffer += delta.content
+                if len(chunk_buffer) >= 200:
+                    on_thinking(f"Processing... ({len(full_text)} chars generated)")
+                    chunk_buffer = ""
         return full_text
     else:
-        response = client.models.generate_content(
-            model=model, contents=user_content, config=config
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7,
         )
-        return response.text
+        return response.choices[0].message.content or ""
 
 
-def call_gemini_with_retry(
+def call_llm_with_retry(
     system_prompt: str,
-    user_content: list,
+    user_content: str,
     max_tokens: int = 8192,
     model: str = DEFAULT_MODEL,
     api_key: str | None = None,
     on_thinking: Optional[Callable[[str], None]] = None,
 ) -> str:
-    """Call Gemini API with retry logic for transient errors."""
+    """Call OpenRouter API with retry logic for transient errors."""
     last_error = None
 
     for attempt in range(MAX_RETRIES):
         try:
-            return call_gemini(system_prompt, user_content, max_tokens, model, api_key, on_thinking)
-
+            return call_llm(system_prompt, user_content, max_tokens, model, api_key, on_thinking)
         except Exception as e:
             error_str = str(e).lower()
-
-            # Check for invalid API key error
-            if any(keyword in error_str for keyword in ["api key not valid", "api_key_invalid", "invalid_argument"]):
-                raise ValueError("Invalid API key. Please check your Gemini API key and try again.")
-
-            # Retry for transient errors
-            if any(keyword in error_str for keyword in ["429", "rate", "500", "503", "overloaded", "unavailable"]):
+            if any(kw in error_str for kw in ["invalid api key", "api_key_invalid", "unauthorized", "401", "authentication"]):
+                raise ValueError("Invalid API key. Please check your OpenRouter API key and try again.")
+            if any(kw in error_str for kw in ["429", "rate", "500", "503", "overloaded", "unavailable"]):
                 last_error = e
                 wait = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
                 print(f"  Transient error. Waiting {wait}s before retry {attempt + 1}/{MAX_RETRIES}...")
@@ -348,7 +390,6 @@ def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | Non
     """Parse JSON from LLM response, with cleanup and one repair attempt."""
     text = raw_text.strip()
 
-    # Strip markdown code fences if present
     if text.startswith("```"):
         first_newline = text.index("\n")
         text = text[first_newline + 1:]
@@ -366,9 +407,9 @@ def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | Non
             f"Error: {e}\n\n"
             f"Return ONLY the corrected valid JSON, nothing else."
         )
-        repaired = call_gemini_with_retry(
+        repaired = call_llm_with_retry(
             system_prompt="You are a JSON repair tool. Return only valid JSON.",
-            user_content=[repair_prompt],
+            user_content=repair_prompt,
             max_tokens=max(len(text) // 2, 4096),
             model=model,
             api_key=api_key,
@@ -387,7 +428,6 @@ def parse_llm_json(raw_text: str, step_name: str, model: str, api_key: str | Non
 def build_notebook(cells_json: list) -> nbformat.NotebookNode:
     """Convert a list of cell dicts into a proper .ipynb notebook."""
     nb = new_notebook()
-
     nb.metadata.kernelspec = {
         "display_name": "Python 3",
         "language": "python",
@@ -401,7 +441,6 @@ def build_notebook(cells_json: list) -> nbformat.NotebookNode:
     for cell_data in cells_json:
         cell_type = cell_data["cell_type"]
         source = cell_data["source"]
-
         if cell_type == "markdown":
             nb.cells.append(new_markdown_cell(source))
         elif cell_type == "code":
@@ -413,16 +452,13 @@ def build_notebook(cells_json: list) -> nbformat.NotebookNode:
 
 
 def nb_to_bytes(nb: nbformat.NotebookNode) -> bytes:
-    """Convert notebook to bytes."""
     buffer = io.StringIO()
     nbformat.write(nb, buffer)
     return buffer.getvalue().encode("utf-8")
 
 
 def cells_to_bytes(cells: list) -> bytes:
-    """Convert cells to notebook bytes."""
-    nb = build_notebook(cells)
-    return nb_to_bytes(nb)
+    return nb_to_bytes(build_notebook(cells))
 
 # ============================================================================
 # PIPELINE
@@ -430,6 +466,11 @@ def cells_to_bytes(cells: list) -> bytes:
 
 ProgressCallback = Callable[[int, str, str, Optional[dict]], None]
 ThinkingCallback = Callable[[str], None]
+
+
+def _clean_metric(m: str) -> str:
+    """Strip formula parts (anything after = or parens) from a metric name."""
+    return re.split(r'\s*[=(]', m)[0].strip().rstrip(',')
 
 
 def run_pipeline(
@@ -445,13 +486,13 @@ def run_pipeline(
         if on_progress:
             on_progress(step, name, detail, extra)
 
-    pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+    paper_text = extract_pdf_text(pdf_bytes)
 
     # Step 1: Paper Analysis
     _notify(1, "Analyzing paper", "Reading PDF and extracting structure...")
-    analysis_raw = call_gemini_with_retry(
+    analysis_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, ANALYSIS_PROMPT],
+        user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{ANALYSIS_PROMPT}",
         max_tokens=MAX_TOKENS_ANALYSIS,
         model=model,
         api_key=api_key,
@@ -460,12 +501,7 @@ def run_pipeline(
     analysis = parse_llm_json(analysis_raw, "paper_analysis", model, api_key=api_key)
     title = analysis.get("title", "Unknown Paper")
     num_algos = len(analysis.get("algorithms", []))
-    # Clean up metrics: strip formula parts (anything after = or ()
-    import re as _re
     raw_metrics = analysis.get("evaluation_metrics", [])
-    def _clean_metric(m: str) -> str:
-        m = _re.split(r'\s*[=(]', m)[0].strip().rstrip(',')
-        return m
     clean_metrics = [_clean_metric(m) for m in raw_metrics[:4] if m and _clean_metric(m)]
 
     _notify(1, "Analyzing paper", f"Found: {title}", {
@@ -484,16 +520,18 @@ def run_pipeline(
         "dataset_name": analysis.get("dataset", {}).get("name", ""),
         "key_layers": analysis.get("model_architecture", {}).get("key_layers", [])[:4],
         "baseline_names": [b.get("name", "") for b in analysis.get("baselines", [])[:3] if b.get("name")],
+        "paper_type": analysis.get("paper_type", ""),
+        "implementation_approach": analysis.get("implementation_approach", ""),
     })
 
     # Step 2: Design Plan
-    _notify(2, "Designing implementation", "Planning model architecture and training...")
+    _notify(2, "Designing implementation", "Planning architecture and notebook structure...")
     design_prompt = DESIGN_PROMPT_TEMPLATE.format(
         analysis_json=json.dumps(analysis, indent=2)
     )
-    design_raw = call_gemini_with_retry(
+    design_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, design_prompt],
+        user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{design_prompt}",
         max_tokens=MAX_TOKENS_DESIGN,
         model=model,
         api_key=api_key,
@@ -501,24 +539,27 @@ def run_pipeline(
     )
     design = parse_llm_json(design_raw, "toy_design", model, api_key=api_key)
     arch = design.get("model_architecture", {})
-    _notify(2, "Designing implementation", "Architecture designed", {
+    num_sections = len(design.get("sections", []))
+    _notify(2, "Designing implementation", "Implementation planned", {
         "type": "design",
         "notebook_title": design.get("notebook_title", ""),
-        "model_type": arch.get("type", ""),
+        "model_type": arch.get("type", "") or arch.get("description", ""),
         "embed_dim": arch.get("embed_dim", ""),
         "num_layers": arch.get("num_layers", ""),
         "num_heads": arch.get("num_heads", ""),
+        "num_sections": num_sections,
+        "pip_dependencies": design.get("pip_dependencies", []),
     })
 
     # Step 3: Generate Notebook Cells
-    _notify(3, "Generating notebook", "Writing PyTorch code and explanations...")
+    _notify(3, "Generating notebook", "Writing code and explanations...")
     generate_prompt = GENERATE_PROMPT_TEMPLATE.format(
         analysis_json=json.dumps(analysis, indent=2),
         design_json=json.dumps(design, indent=2),
     )
-    cells_raw = call_gemini_with_retry(
+    cells_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
-        user_content=[pdf_part, generate_prompt],
+        user_content=f"Here is the full text of the research paper:\n\n{paper_text}\n\n{generate_prompt}",
         max_tokens=MAX_TOKENS_GENERATE,
         model=model,
         api_key=api_key,
@@ -527,14 +568,8 @@ def run_pipeline(
     cells = parse_llm_json(cells_raw, "generate_cells", model, api_key=api_key)
     num_cells = len(cells)
     code_cells = sum(1 for c in cells if c.get("cell_type") == "code")
-    previews = []
-    for c in cells:
-        previews.append({
-            "type": c.get("cell_type", "code"),
-            "preview": c.get("source", "")[:300],
-        })
+    previews = [{"type": c.get("cell_type", "code"), "preview": c.get("source", "")[:300]} for c in cells]
 
-    # Build draft notebook bytes and send as draft_ready
     draft_bytes = cells_to_bytes(cells)
     _notify(3, "Generating notebook", f"Generated {num_cells} cells ({code_cells} code)", {
         "type": "cells_generated",
@@ -544,14 +579,14 @@ def run_pipeline(
         "draft_bytes": draft_bytes,
     })
 
-    # Step 4: Validate & Repair (LLM review)
+    # Step 4: Validate & Repair
     _notify(4, "Validating code", "LLM reviewing for errors...")
     validate_prompt = VALIDATE_PROMPT_TEMPLATE.format(
         cells_json=json.dumps(cells, indent=2)
     )
-    validated_raw = call_gemini_with_retry(
+    validated_raw = call_llm_with_retry(
         system_prompt=SYSTEM_PROMPT,
-        user_content=[validate_prompt],
+        user_content=validate_prompt,
         max_tokens=MAX_TOKENS_VALIDATE,
         model=model,
         api_key=api_key,
@@ -560,192 +595,164 @@ def run_pipeline(
     validated_cells = parse_llm_json(validated_raw, "validate", model, api_key=api_key)
     _notify(4, "Validating code", "Validation complete")
 
-    # Build and return validated notebook
-    nb = build_notebook(validated_cells)
-    return nb_to_bytes(nb)
+    return nb_to_bytes(build_notebook(validated_cells))
 
 # ============================================================================
 # FASTAPI APP
 # ============================================================================
 
-app = FastAPI(
-    title="Paper to Notebook API",
-    version="2.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = FastAPI(title="Paper to Notebook API", version="2.0", docs_url="/docs", redoc_url="/redoc")
 
-# CORS middleware to allow frontend connections
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Temp directory for generated notebooks
 TEMP_DIR = tempfile.mkdtemp(prefix="paper2nb_")
-
-# Concurrency limiter
 _generation_semaphore = asyncio.Semaphore(3)
 
 
-@app.get("/")
-async def root():
-    """API root endpoint."""
-    return {
-        "message": "Paper to Notebook API",
-        "version": "2.0",
-        "endpoints": {
-            "generate": "/api/generate",
-            "download": "/api/download/{job_id}",
-            "health": "/health"
-        }
-    }
+# ============================================================================
+# SHARED SSE STREAM
+# ============================================================================
 
-
-@app.post("/api/generate-from-arxiv")
-async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(...)):
-    """Generate notebook from arXiv URL."""
-    try:
-        import httpx
-        import re
-    except ImportError:
-        raise HTTPException(500, "httpx not installed")
-
-    api_key = api_key.strip()
-    if not api_key:
-        raise HTTPException(400, "Gemini API key is required")
-
-    # Extract arXiv paper ID from URL
-    match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
-    if not match:
-        raise HTTPException(400, "Invalid arXiv URL. Expected format: https://arxiv.org/abs/XXXX.XXXXX")
-
-    paper_id = match.group(1)
-    pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf"
-
-    # Download PDF from arXiv
-    try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            print(f"Downloading PDF from arXiv: {pdf_url}")
-            response = await client.get(pdf_url, timeout=30.0)
-
-            if response.status_code != 200:
-                raise HTTPException(500, f"Failed to download PDF from arXiv: {response.status_code}")
-
-            pdf_bytes = response.content
-
-            # Check file size
-            size_mb = len(pdf_bytes) / (1024 * 1024)
-            if size_mb > MAX_UPLOAD_MB:
-                raise HTTPException(413, f"PDF too large ({size_mb:.1f}MB). Max is {MAX_UPLOAD_MB}MB.")
-
-            print(f"Downloaded PDF: {size_mb:.1f} MB")
-
-    except httpx.HTTPError as e:
-        raise HTTPException(500, f"Failed to download PDF from arXiv: {str(e)}")
-
-    # Continue with same pipeline as file upload
-    job_id = uuid.uuid4().hex[:12]
+async def _stream_pipeline(pdf_bytes: bytes, model: str, api_key: str, job_id: str):
+    """Shared SSE generator that runs the pipeline and streams progress events."""
+    loop = asyncio.get_event_loop()
+    progress_queue: asyncio.Queue = asyncio.Queue()
     draft_id = job_id + "_draft"
 
-    async def event_stream():
-        loop = asyncio.get_event_loop()
-        progress_queue: asyncio.Queue = asyncio.Queue()
+    def on_progress(step: int, name: str, detail: str, extra: dict = None):
+        asyncio.run_coroutine_threadsafe(
+            progress_queue.put(("progress", step, name, detail, extra)), loop,
+        )
 
-        def on_progress(step: int, name: str, detail: str, extra: dict = None):
-            asyncio.run_coroutine_threadsafe(
-                progress_queue.put(("progress", step, name, detail, extra)),
-                loop,
+    def on_thinking(text: str):
+        asyncio.run_coroutine_threadsafe(
+            progress_queue.put(("thinking", text)), loop,
+        )
+
+    async def run_in_thread():
+        async with _generation_semaphore:
+            return await loop.run_in_executor(
+                None,
+                lambda: run_pipeline(pdf_bytes, model, on_progress, api_key=api_key, on_thinking=on_thinking),
             )
 
-        def on_thinking(text: str):
-            asyncio.run_coroutine_threadsafe(
-                progress_queue.put(("thinking", text)),
-                loop,
-            )
+    task = asyncio.create_task(run_in_thread())
 
-        async def run_in_thread():
-            async with _generation_semaphore:
-                return await loop.run_in_executor(
-                    None,
-                    lambda: run_pipeline(
-                        pdf_bytes, DEFAULT_MODEL, on_progress,
-                        api_key=api_key, on_thinking=on_thinking,
-                    ),
-                )
+    while not task.done():
+        try:
+            event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+        except asyncio.TimeoutError:
+            yield ": keepalive\n\n"
+            continue
 
-        task = asyncio.create_task(run_in_thread())
+        if event[0] == "thinking":
+            yield f"event: thinking\ndata: {json.dumps({'text': event[1]})}\n\n"
+            continue
 
-        while not task.done():
-            try:
-                event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+        _, step, name, detail, extra = event
 
-                if event[0] == "thinking":
-                    data = json.dumps({"text": event[1]})
-                    yield f"event: thinking\ndata: {data}\n\n"
-                    continue
-
-                _, step, name, detail, extra = event
-
-                if extra and "draft_bytes" in extra:
-                    draft_bytes = extra.pop("draft_bytes")
-                    draft_path = os.path.join(TEMP_DIR, f"{draft_id}.ipynb")
-                    with open(draft_path, "wb") as f:
-                        f.write(draft_bytes)
-                    data = {"step": step, "name": name, "detail": detail, "extra": extra}
-                    yield f"event: progress\ndata: {json.dumps(data)}\n\n"
-                    draft_data = json.dumps({"job_id": draft_id, "size_kb": len(draft_bytes) // 1024})
-                    yield f"event: draft_ready\ndata: {draft_data}\n\n"
-                else:
-                    data = {"step": step, "name": name, "detail": detail}
-                    if extra:
-                        data["extra"] = extra
-                    yield f"event: progress\ndata: {json.dumps(data)}\n\n"
-            except asyncio.TimeoutError:
-                yield f": keepalive\n\n"
-
-        while not progress_queue.empty():
-            event = await progress_queue.get()
-            if event[0] == "thinking":
-                continue
-            _, step, name, detail, extra = event
-            if extra and "draft_bytes" in extra:
-                extra.pop("draft_bytes")
+        if extra and "draft_bytes" in extra:
+            draft_data = extra.pop("draft_bytes")
+            draft_path = os.path.join(TEMP_DIR, f"{draft_id}.ipynb")
+            with open(draft_path, "wb") as f:
+                f.write(draft_data)
+            yield f"event: progress\ndata: {json.dumps({'step': step, 'name': name, 'detail': detail, 'extra': extra})}\n\n"
+            yield f"event: draft_ready\ndata: {json.dumps({'job_id': draft_id, 'size_kb': len(draft_data) // 1024})}\n\n"
+        else:
             data = {"step": step, "name": name, "detail": detail}
             if extra:
                 data["extra"] = extra
             yield f"event: progress\ndata: {json.dumps(data)}\n\n"
 
-        try:
-            notebook_bytes = task.result()
-            output_path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
-            with open(output_path, "wb") as f:
-                f.write(notebook_bytes)
-            data = json.dumps({"job_id": job_id, "size_kb": len(notebook_bytes) // 1024})
-            yield f"event: complete\ndata: {data}\n\n"
-        except Exception as e:
-            data = json.dumps({"error": str(e)})
-            yield f"event: error\ndata: {data}\n\n"
+    # Drain remaining queued events
+    while not progress_queue.empty():
+        event = await progress_queue.get()
+        if event[0] == "thinking":
+            continue
+        _, step, name, detail, extra = event
+        if extra and "draft_bytes" in extra:
+            extra.pop("draft_bytes")
+        data = {"step": step, "name": name, "detail": detail}
+        if extra:
+            data["extra"] = extra
+        yield f"event: progress\ndata: {json.dumps(data)}\n\n"
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    # Get result — errors propagate naturally to the SSE stream
+    notebook_bytes = task.result()
+    output_path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
+    with open(output_path, "wb") as f:
+        f.write(notebook_bytes)
+    yield f"event: complete\ndata: {json.dumps({'job_id': job_id, 'size_kb': len(notebook_bytes) // 1024})}\n\n"
+
+
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Paper to Notebook API",
+        "version": "2.0",
+        "endpoints": {"generate": "/api/generate", "download": "/api/download/{job_id}", "health": "/health"},
+    }
+
+
+@app.get("/api/models")
+async def list_models():
+    """Fetch available models from OpenRouter."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("https://openrouter.ai/api/v1/models", timeout=10.0)
+        resp.raise_for_status()
+        all_models = resp.json().get("data", [])
+
+    models = []
+    for m in all_models:
+        output_mods = m.get("architecture", {}).get("output_modalities", [])
+        if "text" not in output_mods:
+            continue
+        ctx = m.get("context_length", 0)
+        if ctx < 16000:
+            continue
+        max_out = m.get("top_provider", {}).get("max_completion_tokens") or 0
+        if max_out < 4096:
+            continue
+        model_id = m.get("id", "")
+        if any(skip in model_id for skip in ["/image", "tts", "embed", "whisper", "vision-only"]):
+            continue
+
+        provider = model_id.split("/")[0] if "/" in model_id else "other"
+        pricing = m.get("pricing", {})
+        prompt_price = float(pricing.get("prompt", 0) or 0)
+
+        models.append({
+            "id": model_id,
+            "name": m.get("name", model_id),
+            "provider": provider,
+            "context_length": ctx,
+            "max_output": max_out,
+            "price_per_1m_tokens": round(prompt_price * 1_000_000, 2),
+        })
+
+    models.sort(key=lambda x: (x["provider"], x["name"]))
+    return {"models": models, "default": DEFAULT_MODEL}
 
 
 @app.post("/api/generate")
-async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(...)):
-    """Generate notebook from PDF with streaming progress."""
+async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL)):
+    """Generate notebook from uploaded PDF."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "File must be a PDF")
 
     api_key = api_key.strip()
     if not api_key:
-        raise HTTPException(400, "Gemini API key is required")
+        raise HTTPException(400, "OpenRouter API key is required")
 
     pdf_bytes = await file.read()
     size_mb = len(pdf_bytes) / (1024 * 1024)
@@ -753,95 +760,42 @@ async def generate(request: Request, file: UploadFile = File(...), api_key: str 
         raise HTTPException(413, f"PDF too large ({size_mb:.1f}MB). Max is {MAX_UPLOAD_MB}MB.")
 
     job_id = uuid.uuid4().hex[:12]
-    draft_id = job_id + "_draft"
-
-    async def event_stream():
-        loop = asyncio.get_event_loop()
-        progress_queue: asyncio.Queue = asyncio.Queue()
-
-        def on_progress(step: int, name: str, detail: str, extra: dict = None):
-            asyncio.run_coroutine_threadsafe(
-                progress_queue.put(("progress", step, name, detail, extra)),
-                loop,
-            )
-
-        def on_thinking(text: str):
-            asyncio.run_coroutine_threadsafe(
-                progress_queue.put(("thinking", text)),
-                loop,
-            )
-
-        async def run_in_thread():
-            async with _generation_semaphore:
-                return await loop.run_in_executor(
-                    None,
-                    lambda: run_pipeline(
-                        pdf_bytes, DEFAULT_MODEL, on_progress,
-                        api_key=api_key, on_thinking=on_thinking,
-                    ),
-                )
-
-        task = asyncio.create_task(run_in_thread())
-
-        while not task.done():
-            try:
-                event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
-
-                # Handle thinking events
-                if event[0] == "thinking":
-                    data = json.dumps({"text": event[1]})
-                    yield f"event: thinking\ndata: {data}\n\n"
-                    continue
-
-                _, step, name, detail, extra = event
-
-                # Check if this progress event carries draft notebook bytes
-                if extra and "draft_bytes" in extra:
-                    draft_bytes = extra.pop("draft_bytes")
-                    # Save draft to disk
-                    draft_path = os.path.join(TEMP_DIR, f"{draft_id}.ipynb")
-                    with open(draft_path, "wb") as f:
-                        f.write(draft_bytes)
-                    # Send progress event (without the bytes)
-                    data = {"step": step, "name": name, "detail": detail, "extra": extra}
-                    yield f"event: progress\ndata: {json.dumps(data)}\n\n"
-                    # Send draft_ready event
-                    draft_data = json.dumps({"job_id": draft_id, "size_kb": len(draft_bytes) // 1024})
-                    yield f"event: draft_ready\ndata: {draft_data}\n\n"
-                else:
-                    data = {"step": step, "name": name, "detail": detail}
-                    if extra:
-                        data["extra"] = extra
-                    yield f"event: progress\ndata: {json.dumps(data)}\n\n"
-            except asyncio.TimeoutError:
-                yield f": keepalive\n\n"
-
-        # Drain remaining
-        while not progress_queue.empty():
-            event = await progress_queue.get()
-            if event[0] == "thinking":
-                continue
-            _, step, name, detail, extra = event
-            if extra and "draft_bytes" in extra:
-                extra.pop("draft_bytes")
-            data = {"step": step, "name": name, "detail": detail}
-            if extra:
-                data["extra"] = extra
-            yield f"event: progress\ndata: {json.dumps(data)}\n\n"
-
-        try:
-            notebook_bytes = task.result()
-            output_path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
-            with open(output_path, "wb") as f:
-                f.write(notebook_bytes)
-            data = json.dumps({"job_id": job_id, "size_kb": len(notebook_bytes) // 1024})
-            yield f"event: complete\ndata: {data}\n\n"
-        except Exception as e:
-            data = json.dumps({"error": str(e)})
-            yield f"event: error\ndata: {data}\n\n"
-
     return StreamingResponse(
-        event_stream(),
+        _stream_pipeline(pdf_bytes, model, api_key, job_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/generate-from-arxiv")
+async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL)):
+    """Generate notebook from arXiv URL."""
+    api_key = api_key.strip()
+    if not api_key:
+        raise HTTPException(400, "OpenRouter API key is required")
+
+    match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
+    if not match:
+        raise HTTPException(400, "Invalid arXiv URL. Expected format: https://arxiv.org/abs/XXXX.XXXXX")
+
+    paper_id = match.group(1)
+    pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf"
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        print(f"Downloading PDF from arXiv: {pdf_url}")
+        response = await client.get(pdf_url, timeout=30.0)
+        if response.status_code != 200:
+            raise HTTPException(500, f"Failed to download PDF from arXiv: {response.status_code}")
+        pdf_bytes = response.content
+
+    size_mb = len(pdf_bytes) / (1024 * 1024)
+    if size_mb > MAX_UPLOAD_MB:
+        raise HTTPException(413, f"PDF too large ({size_mb:.1f}MB). Max is {MAX_UPLOAD_MB}MB.")
+    print(f"Downloaded PDF: {size_mb:.1f} MB")
+
+    job_id = uuid.uuid4().hex[:12]
+    return StreamingResponse(
+        _stream_pipeline(pdf_bytes, model, api_key, job_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -855,122 +809,57 @@ async def download(job_id: str):
     path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
     if not os.path.exists(path):
         raise HTTPException(404, "Notebook not found or expired")
-    return FileResponse(
-        path,
-        media_type="application/x-ipynb+json",
-        filename="generated_notebook.ipynb",
-    )
+    return FileResponse(path, media_type="application/x-ipynb+json", filename="generated_notebook.ipynb")
 
 
 @app.post("/api/create-gist/{job_id}")
 async def create_gist(job_id: str):
     """Create a GitHub Gist for opening in Colab."""
-    try:
-        import httpx
-    except ImportError:
-        raise HTTPException(500, "httpx not installed. Run: pip install httpx")
-
-    # Handle test notebook
-    if job_id == "test":
-        # Get the directory where this script is located
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(script_dir, "generated_notebook (1).ipynb")
-        print(f"Test notebook path: {path}")
-        print(f"Test notebook exists: {os.path.exists(path)}")
-    else:
-        if not job_id.replace("_", "").isalnum():
-            raise HTTPException(400, "Invalid job ID")
-        path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
+    if not job_id.replace("_", "").isalnum():
+        raise HTTPException(400, "Invalid job ID")
+    path = os.path.join(TEMP_DIR, f"{job_id}.ipynb")
 
     if not os.path.exists(path):
-        print(f"ERROR: Notebook not found at: {path}")
         raise HTTPException(404, f"Notebook not found at: {path}")
 
-    # Read notebook content
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            notebook_content = f.read()
-    except Exception as e:
-        print(f"Error reading notebook: {e}")
-        raise HTTPException(500, f"Failed to read notebook: {str(e)}")
+    with open(path, "r", encoding="utf-8") as f:
+        notebook_content = f.read()
 
-    # Get GitHub token
     github_token = os.getenv("GITHUB_TOKEN")
     if not github_token:
         raise HTTPException(500, "GITHUB_TOKEN not configured in backend")
 
-    # Create GitHub Gist
-    try:
-        async with httpx.AsyncClient() as client:
-            print("Creating GitHub Gist...")
-            response = await client.post(
-                "https://api.github.com/gists",
-                json={
-                    "description": "Paper to Notebook - Generated Notebook",
-                    "public": True,
-                    "files": {
-                        "notebook.ipynb": {
-                            "content": notebook_content
-                        }
-                    }
-                },
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {github_token}",
-                    "X-GitHub-Api-Version": "2022-11-28"
-                },
-                timeout=10.0
-            )
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.github.com/gists",
+            json={
+                "description": "Paper to Notebook - Generated Notebook",
+                "public": True,
+                "files": {"notebook.ipynb": {"content": notebook_content}},
+            },
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {github_token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=10.0,
+        )
 
-            print(f"GitHub API response status: {response.status_code}")
+    if response.status_code != 201:
+        raise HTTPException(500, f"GitHub API error: {response.status_code} - {response.text}")
 
-            if response.status_code != 201:
-                error_detail = response.text
-                print(f"GitHub API error: {error_detail}")
-                raise HTTPException(500, f"GitHub API error: {response.status_code} - {error_detail}")
+    gist_data = response.json()
+    gist_id = gist_data["id"]
+    owner = gist_data["owner"]["login"]
+    filename = list(gist_data["files"].keys())[0]
+    colab_url = f"https://colab.research.google.com/gist/{owner}/{gist_id}/{filename}"
 
-            gist_data = response.json()
-            gist_id = gist_data["id"]
-            owner = gist_data["owner"]["login"]
-            # Get the first filename from the files dict
-            filename = list(gist_data["files"].keys())[0]
+    return {"gist_id": gist_id, "gist_url": gist_data["html_url"], "colab_url": colab_url}
 
-            # Construct proper Colab URL
-            colab_url = f"https://colab.research.google.com/gist/{owner}/{gist_id}/{filename}"
-
-            print(f"Gist created successfully: {gist_id}")
-            print(f"Colab URL: {colab_url}")
-
-            return {
-                "gist_id": gist_id,
-                "gist_url": gist_data["html_url"],
-                "colab_url": colab_url
-            }
-
-    except httpx.HTTPError as e:
-        print(f"HTTP error creating Gist: {e}")
-        raise HTTPException(500, f"Network error: {str(e)}")
-    except Exception as e:
-        print(f"Unexpected error creating Gist: {e}")
-        raise HTTPException(500, f"Failed to create Gist: {str(e)}")
-
-
-@app.get("/api/test-notebook")
-async def test_notebook():
-    """Serve the test notebook for Colab testing."""
-    test_path = os.path.join(os.path.dirname(__file__), "generated_notebook (1).ipynb")
-    if not os.path.exists(test_path):
-        raise HTTPException(404, "Test notebook not found")
-    return FileResponse(
-        test_path,
-        media_type="application/x-ipynb+json",
-        filename="test_notebook.ipynb",
-    )
 
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
     return {"status": "ok", "version": "2.0"}
 
 

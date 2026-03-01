@@ -279,6 +279,11 @@ export default function Home() {
   const [arxivUrl, setArxivUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-pro')
+  const [availableModels, setAvailableModels] = useState<Array<{id: string, name: string, provider: string, context_length?: number, max_output?: number, price_per_1m_tokens?: number}>>([])
+  const [modelSearch, setModelSearch] = useState('')
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
+  const modelDropdownRef = useRef<HTMLDivElement>(null)
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState('')
   const [bannerVisible, setBannerVisible] = useState(true)
@@ -399,8 +404,17 @@ export default function Home() {
 
   // Load API key from localStorage and check for pending file/URL
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key')
+    const savedKey = localStorage.getItem('openrouter_api_key')
     if (savedKey) setApiKey(savedKey)
+
+    // Fetch available models from backend
+    fetch(`${API_URL}/api/models`)
+      .then(r => r.json())
+      .then(data => {
+        setAvailableModels(data.models || [])
+        if (data.default) setSelectedModel(data.default)
+      })
+      .catch(() => {})
 
     // Check for pending file from landing page
     const pendingFileData = sessionStorage.getItem('pendingFile')
@@ -424,6 +438,17 @@ export default function Home() {
       setArxivUrl(pendingUrl)
       sessionStorage.removeItem('pendingArxivUrl')
     }
+  }, [])
+
+  // Close model dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   // File drop handlers
@@ -460,7 +485,7 @@ export default function Home() {
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const key = e.target.value
     setApiKey(key)
-    localStorage.setItem('gemini_api_key', key)
+    localStorage.setItem('openrouter_api_key', key)
   }
 
   const handleGenerate = async () => {
@@ -495,6 +520,7 @@ export default function Home() {
 
     const formData = new FormData()
     formData.append('api_key', apiKey.trim())
+    formData.append('model', selectedModel)
 
     // Determine which endpoint to use
     let endpoint = `${API_URL}/api/generate`
@@ -788,13 +814,13 @@ export default function Home() {
 
             {/* API Key Input */}
             <div className="bg-white/5 backdrop-blur-md border-2 border-[#8ad4ff]/40 rounded-xl p-3 space-y-3">
-              <label className="text-sm font-medium text-white/80">Gemini API Key</label>
+              <label className="text-sm font-medium text-white/80">OpenRouter API Key</label>
               <div className="flex gap-2">
                 <input
                   type={showKey ? 'text' : 'password'}
                   value={apiKey}
                   onChange={handleApiKeyChange}
-                  placeholder="AIza..."
+                  placeholder="sk-or-..."
                   className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm font-mono focus:border-white/30 focus:outline-none transition-colors"
                 />
                 <button
@@ -805,10 +831,80 @@ export default function Home() {
                 </button>
               </div>
               <p className="text-xs text-white/50">
-                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[#8ad4ff] hover:text-[#8ad4ff]">
-                  Get a free API key
-                </a> from Google AI Studio - it takes 10 seconds
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" className="text-[#8ad4ff] hover:text-[#8ad4ff]">
+                  Get an API key
+                </a> from OpenRouter - supports 200+ models
               </p>
+            </div>
+
+            {/* Model Selector */}
+            <div ref={modelDropdownRef} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3 space-y-2 relative">
+              <label className="text-sm font-medium text-white/80">Model</label>
+              <button
+                type="button"
+                onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch('') }}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-left text-white focus:border-white/30 focus:outline-none transition-colors flex items-center justify-between"
+              >
+                <span className="truncate">
+                  {availableModels.find(m => m.id === selectedModel)?.name || selectedModel}
+                </span>
+                <svg className={`w-4 h-4 ml-2 transition-transform ${modelDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {modelDropdownOpen && (
+                <div className="absolute left-0 right-0 bottom-full mb-1 z-50 bg-[#0a0a0a] border border-white/20 rounded-xl shadow-2xl overflow-hidden flex flex-col" style={{maxHeight: '300px'}}>
+                  <div className="flex-1 overflow-y-auto">
+                    {(() => {
+                      const query = modelSearch.toLowerCase()
+                      const filtered = availableModels.filter(m =>
+                        m.name.toLowerCase().includes(query) || m.id.toLowerCase().includes(query) || m.provider.toLowerCase().includes(query)
+                      )
+                      const grouped = filtered.reduce((acc, m) => {
+                        const p = m.provider
+                        if (!acc[p]) acc[p] = []
+                        acc[p].push(m)
+                        return acc
+                      }, {} as Record<string, typeof availableModels>)
+                      const sortedProviders = Object.keys(grouped).sort()
+
+                      if (sortedProviders.length === 0) {
+                        return <div className="px-3 py-4 text-sm text-white/40 text-center">No models found</div>
+                      }
+
+                      return sortedProviders.map(provider => (
+                        <div key={provider}>
+                          <div className="px-3 py-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider bg-white/5 sticky top-0">
+                            {provider}
+                          </div>
+                          {grouped[provider].map(m => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => { setSelectedModel(m.id); setModelDropdownOpen(false) }}
+                              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-white/10 transition-colors flex items-center justify-between gap-2 ${m.id === selectedModel ? 'bg-white/10 text-[#8ad4ff]' : 'text-white/80'}`}
+                            >
+                              <span className="truncate">{m.name}</span>
+                              <span className="text-[10px] text-white/30 whitespace-nowrap flex-shrink-0">
+                                {m.context_length ? `${Math.round(m.context_length / 1000)}k` : ''}
+                                {m.price_per_1m_tokens !== undefined ? ` · $${m.price_per_1m_tokens}` : ''}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                  <div className="p-2 border-t border-white/10 flex-shrink-0">
+                    <input
+                      type="text"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      placeholder="Search models..."
+                      autoFocus
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-white/40 focus:border-white/30 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Generate Button */}
@@ -947,7 +1043,7 @@ export default function Home() {
                           })}
                         </div>
 
-                        {/* Stage 1 only: Live Gemini reading display (moved below activity for stage 2) */}
+                        {/* Stage 1 only: Live AI reading display (moved below activity for stage 2) */}
                         {currentStep === 1 && thinking && (
                           <motion.div
                             initial={{ opacity: 0, y: 10 }}
@@ -962,7 +1058,7 @@ export default function Home() {
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#8ad4ff] opacity-75" />
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
-                              <span className="text-xs font-semibold text-white/80">Gemini is reading your paper...</span>
+                              <span className="text-xs font-semibold text-white/80">AI is reading your paper...</span>
                               <ChevronDown className={`ml-auto w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${thinkingExpanded ? 'rotate-180' : ''}`} />
                             </button>
                             {thinkingExpanded && (
@@ -1006,7 +1102,7 @@ export default function Home() {
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
                               <span className="text-xs font-semibold text-white/80">
-                                {currentStep === 1 ? "Gemini is reading your paper..." : "Gemini is designing the implementation..."}
+                                {currentStep === 1 ? "AI is reading your paper..." : "AI is designing the implementation..."}
                               </span>
                             </div>
                             <div className="px-4 py-6 flex items-center gap-3">
@@ -1143,7 +1239,7 @@ export default function Home() {
                           </div>
                         )}
 
-                        {/* Stage 2: Gemini designing — appears below activity cards */}
+                        {/* Stage 2: AI designing — appears below activity cards */}
                         {currentStep === 2 && thinking && (
                           <motion.div
                             initial={{ opacity: 0, y: 10 }}
@@ -1158,7 +1254,7 @@ export default function Home() {
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#8ad4ff] opacity-75" />
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#8ad4ff]" />
                               </span>
-                              <span className="text-xs font-semibold text-white/80">Gemini is designing the implementation...</span>
+                              <span className="text-xs font-semibold text-white/80">AI is designing the implementation...</span>
                               <ChevronDown className={`ml-auto w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${thinkingExpanded ? 'rotate-180' : ''}`} />
                             </button>
                             {thinkingExpanded && (
@@ -1278,7 +1374,7 @@ export default function Home() {
           transition={{ delay: 0.6 }}
           className="text-center mt-8 text-xs text-white/40"
         >
-          Powered by Gemini 2.0 Flash · Real PyTorch implementations · Bring your own API key
+          Powered by OpenRouter · Real PyTorch implementations · Bring your own API key
         </motion.div>
 
       </div>

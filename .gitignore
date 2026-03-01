@@ -56,3 +56,6 @@ htmlcov/
 
 # Railway
 .railway/
+
+# Playwright MCP artifacts
+.playwright-mcp/
