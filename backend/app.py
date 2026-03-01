@@ -782,14 +782,14 @@ async def list_models():
 
 
 @app.post("/api/generate")
-async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(""), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
+async def generate(request: Request, file: UploadFile = File(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
     """Generate notebook from uploaded PDF."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "File must be a PDF")
 
-    api_key = _get_api_key(api_key.strip() or None)
+    api_key = api_key.strip()
     if not api_key:
-        raise HTTPException(400, "OpenRouter API key is required. Provide it via the frontend or set OPENROUTER_API_KEY on the server.")
+        raise HTTPException(400, "OpenRouter API key is required")
 
     pdf_bytes = await file.read()
     size_mb = len(pdf_bytes) / (1024 * 1024)
@@ -805,11 +805,11 @@ async def generate(request: Request, file: UploadFile = File(...), api_key: str 
 
 
 @app.post("/api/generate-from-arxiv")
-async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(""), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
+async def generate_from_arxiv(request: Request, arxiv_url: str = Form(...), api_key: str = Form(...), model: str = Form(DEFAULT_MODEL), model_max_output: int = Form(0)):
     """Generate notebook from arXiv URL."""
-    api_key = _get_api_key(api_key.strip() or None)
+    api_key = api_key.strip()
     if not api_key:
-        raise HTTPException(400, "OpenRouter API key is required. Provide it via the frontend or set OPENROUTER_API_KEY on the server.")
+        raise HTTPException(400, "OpenRouter API key is required")
 
     match = re.search(r'arxiv\.org/(?:abs|pdf)/([0-9]+\.[0-9]+)', arxiv_url)
     if not match:
